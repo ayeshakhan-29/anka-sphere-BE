@@ -1,0 +1,275 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  MANAGER_PRODUCT_MODELLING
+  MANAGER_PRODUCT_DEVELOPMENT
+  MANAGER_PRODUCT_GROWTH
+  CONTENT_WRITER
+  DESIGNER
+  DEVELOPER
+  SOCIAL_MEDIA
+  PAID_ADS
+  SEO
+}
+
+enum ProjectStatus {
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  ARCHIVED
+}
+
+enum PipelineStage {
+  PROFILING
+  WRITTEN_CONTENT
+  DESIGN
+  DEVELOPMENT
+  MARKETING
+}
+
+enum GateStatus {
+  LOCKED
+  IN_PROGRESS
+  PENDING_REVIEW
+  APPROVED
+}
+
+enum MilestoneStatus {
+  PENDING
+  DONE
+}
+
+enum ContentStatus {
+  DRAFT
+  IN_REVIEW
+  APPROVED
+  PUBLISHED
+}
+
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         Role     @default(CONTENT_WRITER)
+  avatarUrl    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  projectMembers  ProjectMember[]
+  comments        Comment[]
+  createdProjects Project[]       @relation("CreatedBy")
+
+  @@map("users")
+}
+
+// ─── Projects ─────────────────────────────────────────────────────────────────
+
+model Project {
+  id           String        @id @default(cuid())
+  name         String
+  clientName   String
+  status       ProjectStatus @default(ACTIVE)
+  currentStage PipelineStage @default(PROFILING)
+  startDate    DateTime?
+  targetDate   DateTime?
+  description  String?
+  createdById  String
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  createdBy   User            @relation("CreatedBy", fields: [createdById], references: [id])
+  members     ProjectMember[]
+  pipeline    PipelineEntry[]
+  profiling   ProjectProfiling?
+  content     WrittenContent?
+  milestones  Milestone[]
+  comments    Comment[]
+
+  @@map("projects")
+}
+
+model ProjectMember {
+  id        String   @id @default(cuid())
+  projectId String
+  userId    String
+  role      Role
+  joinedAt  DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@map("project_members")
+}
+
+// ─── Pipeline ─────────────────────────────────────────────────────────────────
+
+model PipelineEntry {
+  id         String        @id @default(cuid())
+  projectId  String
+  stage      PipelineStage
+  status     GateStatus    @default(LOCKED)
+  startedAt  DateTime?
+  approvedAt DateTime?
+  notes      String?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, stage])
+  @@map("pipeline_entries")
+}
+
+// ─── Milestones ───────────────────────────────────────────────────────────────
+
+model Milestone {
+  id        String          @id @default(cuid())
+  projectId String
+  label     String
+  dueDate   DateTime?
+  status    MilestoneStatus @default(PENDING)
+  sortOrder Int             @default(0)
+  createdAt DateTime        @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("milestones")
+}
+
+// ─── Dept 1a: Project Profiling ───────────────────────────────────────────────
+
+model ProjectProfiling {
+  id        String @id @default(cuid())
+  projectId String @unique
+
+  // Brief
+  companyName String?
+  industry    String?
+  about       String?
+  objectives  String?
+  scope       String?
+  budget      String?
+  priority    String?
+
+  // Brand
+  brandVoice    String?
+  tagline       String?
+  brandColours  String?
+  typography    String?
+  brandRefs     String?
+  brandDislikes String?
+
+  // SEO
+  primaryKeywords   String?
+  secondaryKeywords String?
+  existingDomain    String?
+  localSeo          String?
+  seoNotes          String?
+
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  personas    Persona[]
+  competitors Competitor[]
+
+  @@map("project_profiling")
+}
+
+model Persona {
+  id          String  @id @default(cuid())
+  profilingId String
+  name        String
+  ageRange    String?
+  jobRole     String?
+  painPoints  String?
+  goals       String?
+  sortOrder   Int     @default(0)
+
+  profiling ProjectProfiling @relation(fields: [profilingId], references: [id], onDelete: Cascade)
+
+  @@map("personas")
+}
+
+model Competitor {
+  id          String  @id @default(cuid())
+  profilingId String
+  name        String
+  websiteUrl  String?
+  strength    String?
+  weakness    String?
+  sortOrder   Int     @default(0)
+
+  profiling ProjectProfiling @relation(fields: [profilingId], references: [id], onDelete: Cascade)
+
+  @@map("competitors")
+}
+
+// ─── Dept 1b: Written Content ─────────────────────────────────────────────────
+
+model WrittenContent {
+  id        String @id @default(cuid())
+  projectId String @unique
+
+  contentBrief  String?
+  toneOfVoice   String?
+  seoGuidelines String?
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  project Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  pages   ContentPage[]
+
+  @@map("written_content")
+}
+
+model ContentPage {
+  id               String        @id @default(cuid())
+  writtenContentId String
+  title            String
+  slug             String?
+  body             String?       @db.Text
+  status           ContentStatus @default(DRAFT)
+  wordCount        Int?
+  seoTitle         String?
+  seoDescription   String?
+  sortOrder        Int           @default(0)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  writtenContent WrittenContent @relation(fields: [writtenContentId], references: [id], onDelete: Cascade)
+  comments       Comment[]
+
+  @@map("content_pages")
+}
+
+// ─── Comments (shared across entities) ───────────────────────────────────────
+
+model Comment {
+  id            String   @id @default(cuid())
+  body          String
+  authorId      String
+  projectId     String?
+  contentPageId String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  author      User         @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  project     Project?     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  contentPage ContentPage? @relation(fields: [contentPageId], references: [id], onDelete: Cascade)
+
+  @@map("comments")
+}
