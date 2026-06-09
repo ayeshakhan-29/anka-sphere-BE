@@ -55,6 +55,27 @@ enum ContentStatus {
   PUBLISHED
 }
 
+enum DesignTaskStatus {
+  TODO
+  IN_PROGRESS
+  IN_REVIEW
+  DONE
+}
+
+enum DesignTaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum AssetType {
+  IMAGE
+  VIDEO
+  FONT
+  DOCUMENT
+  OTHER
+}
+
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 model User {
@@ -94,6 +115,7 @@ model Project {
   pipeline    PipelineEntry[]
   profiling   ProjectProfiling?
   content     WrittenContent?
+  design      Design?
   milestones  Milestone[]
   comments    Comment[]
 
@@ -234,6 +256,63 @@ model WrittenContent {
   pages   ContentPage[]
 
   @@map("written_content")
+}
+
+// ─── Dept 1c: Design ──────────────────────────────────────────────────────────
+
+model Design {
+  id        String @id @default(cuid())
+  projectId String @unique
+
+  brief         String?
+  styleGuide    String?
+  figmaUrl      String?
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  project Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks   DesignTask[]
+  assets  DesignAsset[]
+
+  @@map("design")
+}
+
+model DesignTask {
+  id          String             @id @default(cuid())
+  designId    String
+  title       String
+  description String?
+  status      DesignTaskStatus   @default(TODO)
+  priority    DesignTaskPriority @default(MEDIUM)
+  assigneeName String?
+  dueDate     DateTime?
+  sortOrder   Int                @default(0)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  design Design @relation(fields: [designId], references: [id], onDelete: Cascade)
+
+  @@map("design_tasks")
+}
+
+model DesignAsset {
+  id          String    @id @default(cuid())
+  designId    String
+  name        String
+  type        AssetType @default(OTHER)
+  url         String
+  thumbnailUrl String?
+  fileSize    Int?
+  version     Int       @default(1)
+  notes       String?
+  approvedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  design Design @relation(fields: [designId], references: [id], onDelete: Cascade)
+
+  @@map("design_assets")
 }
 
 model ContentPage {

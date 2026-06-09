@@ -5,6 +5,7 @@ import authPlugin from './plugins/auth.js';
 import authRoutes from './routes/auth.js';
 import projectRoutes from './routes/projects.js';
 import writtenContentRoutes from './routes/written-content.js';
+import designRoutes from './routes/design.js';
 import { errorHandler } from './middleware/error-handler.js';
 
 export async function buildApp() {
@@ -38,6 +39,7 @@ export async function buildApp() {
   await app.register(authRoutes, { prefix: '/auth' });
   await app.register(projectRoutes, { prefix: '/projects' });
   await app.register(writtenContentRoutes, { prefix: '/projects' });
+  await app.register(designRoutes, { prefix: '/projects' });
 
   return app;
 }
