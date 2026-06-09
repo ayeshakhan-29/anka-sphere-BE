@@ -49,7 +49,7 @@ const writtenContentRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(422).send({ error: 'No written content found for this project.' });
     }
 
-    const approvedPages = content.pages.filter(p => p.status === 'APPROVED');
+    const approvedPages = content.pages.filter((p: { status: string }) => p.status === 'APPROVED');
     if (approvedPages.length === 0) {
       return reply.code(422).send({ error: 'At least one content page must be approved before passing the Hard Gate.' });
     }

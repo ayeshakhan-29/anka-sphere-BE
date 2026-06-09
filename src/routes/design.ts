@@ -55,7 +55,7 @@ const designRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(422).send({ error: 'Design brief is required before passing the Soft Gate.' });
     }
 
-    const doneTasks = design.tasks.filter(t => t.status === 'DONE').length;
+    const doneTasks = design.tasks.filter((t: { status: string }) => t.status === 'DONE').length;
     const totalTasks = design.tasks.length;
 
     // Soft gate: warn but allow if tasks exist and at least one done
