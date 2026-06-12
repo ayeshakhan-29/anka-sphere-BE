@@ -117,6 +117,7 @@ model Project {
   content      WrittenContent?
   design       Design?
   development  Development?
+  marketing    Marketing?
   milestones   Milestone[]
   comments     Comment[]
 
@@ -392,4 +393,43 @@ model Comment {
   contentPage ContentPage? @relation(fields: [contentPageId], references: [id], onDelete: Cascade)
 
   @@map("comments")
+}
+
+// ─── Dept 3: Marketing (Stage 5) ─────────────────────────────────────────────
+
+model Marketing {
+  id             String   @id @default(cuid())
+  projectId      String   @unique
+  strategy       String?
+  targetAudience String?
+  budget         String?
+  channels       String?
+  notes          String?
+  completedAt    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  project Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks   MarketingTask[]
+
+  @@map("marketing")
+}
+
+model MarketingTask {
+  id          String             @id @default(cuid())
+  marketingId String
+  title       String
+  description String?
+  status      DesignTaskStatus   @default(TODO)
+  priority    DesignTaskPriority @default(MEDIUM)
+  category    String?
+  assigneeName String?
+  dueDate     DateTime?
+  sortOrder   Int                @default(0)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  marketing Marketing @relation(fields: [marketingId], references: [id], onDelete: Cascade)
+
+  @@map("marketing_tasks")
 }

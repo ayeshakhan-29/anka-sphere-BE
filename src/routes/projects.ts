@@ -44,6 +44,7 @@ const projectRoutes: FastifyPluginAsync = async (app) => {
         content:     { include: { pages: { orderBy: { sortOrder: 'asc' } } } },
         design:      { include: { tasks: true, assets: true } },
         development: { include: { tasks: { orderBy: [{ status: 'asc' }, { sortOrder: 'asc' }] } } },
+        marketing:   { include: { tasks: { orderBy: [{ status: 'asc' }, { sortOrder: 'asc' }] } } },
       },
     });
     if (!project) return reply.code(404).send({ error: 'Project not found' });
