@@ -6,6 +6,7 @@ import authRoutes from './routes/auth.js';
 import projectRoutes from './routes/projects.js';
 import writtenContentRoutes from './routes/written-content.js';
 import designRoutes from './routes/design.js';
+import developmentRoutes from './routes/development.js';
 import { errorHandler } from './middleware/error-handler.js';
 
 export async function buildApp() {
@@ -40,6 +41,7 @@ export async function buildApp() {
   await app.register(projectRoutes, { prefix: '/projects' });
   await app.register(writtenContentRoutes, { prefix: '/projects' });
   await app.register(designRoutes, { prefix: '/projects' });
+  await app.register(developmentRoutes, { prefix: '/projects' });
 
   return app;
 }

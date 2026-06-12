@@ -40,8 +40,10 @@ const projectRoutes: FastifyPluginAsync = async (app) => {
         members: { include: { user: { select: { id: true, name: true, avatarUrl: true, role: true } } } },
         pipeline: { orderBy: { stage: 'asc' } },
         milestones: { orderBy: { sortOrder: 'asc' } },
-        profiling: { include: { personas: true, competitors: true } },
-        content: { include: { pages: { orderBy: { sortOrder: 'asc' } } } },
+        profiling:   { include: { personas: true, competitors: true } },
+        content:     { include: { pages: { orderBy: { sortOrder: 'asc' } } } },
+        design:      { include: { tasks: true, assets: true } },
+        development: { include: { tasks: { orderBy: [{ status: 'asc' }, { sortOrder: 'asc' }] } } },
       },
     });
     if (!project) return reply.code(404).send({ error: 'Project not found' });

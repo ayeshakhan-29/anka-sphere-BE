@@ -110,14 +110,15 @@ model Project {
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 
-  createdBy   User            @relation("CreatedBy", fields: [createdById], references: [id])
-  members     ProjectMember[]
-  pipeline    PipelineEntry[]
-  profiling   ProjectProfiling?
-  content     WrittenContent?
-  design      Design?
-  milestones  Milestone[]
-  comments    Comment[]
+  createdBy    User              @relation("CreatedBy", fields: [createdById], references: [id])
+  members      ProjectMember[]
+  pipeline     PipelineEntry[]
+  profiling    ProjectProfiling?
+  content      WrittenContent?
+  design       Design?
+  development  Development?
+  milestones   Milestone[]
+  comments     Comment[]
 
   @@map("projects")
 }
@@ -333,6 +334,46 @@ model ContentPage {
   comments       Comment[]
 
   @@map("content_pages")
+}
+
+// ─── Dept 2: Development ─────────────────────────────────────────────────────
+
+model Development {
+  id        String @id @default(cuid())
+  projectId String @unique
+
+  techStack  String?
+  repoUrl    String?
+  stagingUrl String?
+  liveUrl    String?
+  notes      String?
+
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  project Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks   DevTask[]
+
+  @@map("development")
+}
+
+model DevTask {
+  id            String             @id @default(cuid())
+  developmentId String
+  title         String
+  description   String?
+  status        DesignTaskStatus   @default(TODO)
+  priority      DesignTaskPriority @default(MEDIUM)
+  assigneeName  String?
+  dueDate       DateTime?
+  sortOrder     Int                @default(0)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  development Development @relation(fields: [developmentId], references: [id], onDelete: Cascade)
+
+  @@map("dev_tasks")
 }
 
 // ─── Comments (shared across entities) ───────────────────────────────────────
