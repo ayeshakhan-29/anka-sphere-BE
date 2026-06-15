@@ -2,6 +2,19 @@
 
 REST API for the Anka Sphere internal agency operations dashboard. Built with **Fastify**, **Prisma 7**, and **PostgreSQL**.
 
+## Default Credentials
+
+The seed runs automatically on every server start (`npm start`) and is safe to run multiple times (uses upsert). It creates the following users with password **`password`**:
+
+| Email | Password | Role |
+|---|---|---|
+| admin@anka.agency | password | ADMIN |
+| james@anka.agency | password | DEVELOPER |
+| sara@anka.agency | password | DESIGNER |
+| liam@anka.agency | password | SEO |
+
+> **Production:** the seed runs before `node dist/server.js` on every Railway deploy. No manual step needed — log in with `admin@anka.agency` / `password` after the first successful deployment.
+
 ## Tech Stack
 
 | Layer | Technology |
