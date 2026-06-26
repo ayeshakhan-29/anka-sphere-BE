@@ -76,7 +76,61 @@ enum AssetType {
   OTHER
 }
 
+enum WpEnv {
+  DEV
+  STAGING
+  PRODUCTION
+}
+
+enum DevTaskStatus {
+  SETUP
+  IN_DEVELOPMENT
+  IN_QA
+  STAGING
+  LIVE
+  MAINTENANCE
+}
+
+enum QueueItemStatus {
+  QUEUED
+  IN_PROGRESS
+  IN_QA
+  STAGING_DONE
+  LIVE_DONE
+  FAILED
+}
+
+enum QaStatus {
+  NOT_STARTED
+  PASS
+  FAIL
+}
+
+enum ContentKind {
+  PAGE
+  POST
+}
+
+// ─── WP Deployment Models ──────────────────────────────────────────────────
+
+enum DeploymentLogStatus {
+  SUCCESS
+  ERROR
+}
+
+enum WPPluginStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum WPThemeStatus {
+  ACTIVE
+  INACTIVE
+}
+
 // ─── Auth ─────────────────────────────────────────────────────────────────────
+
+
 
 model User {
   id           String   @id @default(cuid())
@@ -120,6 +174,12 @@ model Project {
   marketing    Marketing?
   milestones   Milestone[]
   comments     Comment[]
+
+  wpConnections       WpConnection[]
+  deploymentQueueItems DeploymentQueueItem[]
+  wpPlugins           WPPlugin[]
+  wpThemes            WPTheme[]
+
 
   @@map("projects")
 }
@@ -333,6 +393,7 @@ model ContentPage {
 
   writtenContent WrittenContent @relation(fields: [writtenContentId], references: [id], onDelete: Cascade)
   comments       Comment[]
+  devTasks       DevTask[]
 
   @@map("content_pages")
 }
@@ -349,6 +410,13 @@ model Development {
   liveUrl    String?
   notes      String?
 
+  // Maintenance fields
+  performanceNotes String?
+  backupLog        Json?
+  uptimeStatus       String?
+  uptimeResponseTime Int?
+  uptimeLastChecked  DateTime?
+
   completedAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -364,13 +432,16 @@ model DevTask {
   developmentId String
   title         String
   description   String?
-  status        DesignTaskStatus   @default(TODO)
+  status        DevTaskStatus      @default(SETUP)
   priority      DesignTaskPriority @default(MEDIUM)
   assigneeName  String?
   dueDate       DateTime?
   sortOrder     Int                @default(0)
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
+
+  pageId        String?
+  page          ContentPage?       @relation(fields: [pageId], references: [id], onDelete: SetNull)
 
   development Development @relation(fields: [developmentId], references: [id], onDelete: Cascade)
 
@@ -432,4 +503,128 @@ model MarketingTask {
   marketing Marketing @relation(fields: [marketingId], references: [id], onDelete: Cascade)
 
   @@map("marketing_tasks")
+}
+
+// ─── WP Deployment ──────────────────────────────────────────────────────────────
+
+enum WpAuthType {
+  APP_PASSWORD
+}
+
+enum WpConnectionStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model WpConnection {
+  id               String            @id @default(cuid())
+  projectId        String
+  env              WpEnv
+
+  siteUrl         String
+  wpUsername      String
+  wpAuthType      WpAuthType @default(APP_PASSWORD)
+
+  // encrypted at rest
+  wpAppPasswordEnc String?
+
+  status           WpConnectionStatus @default(ACTIVE)
+  notes            String?
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  project          Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, env])
+  @@map("wp_connections")
+}
+
+model DeploymentQueueItem {
+  id          String          @id @default(cuid())
+  projectId   String
+  contentKind ContentKind
+  pageId      String?
+  postId      String?
+  title       String
+  slug        String?
+  status      QueueItemStatus @default(QUEUED)
+  qaStatus    QaStatus        @default(NOT_STARTED)
+  qaNotes     String?
+  qaChecklist Json?
+  targetEnv   WpEnv           @default(STAGING)
+  wpPostId    Int?
+  wpUrl       String?
+  errorMessage String?
+  deployedAt  DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  logs        DeploymentLog[]
+
+  @@map("deployment_queue_items")
+}
+
+model DeploymentLog {
+  id          String               @id @default(cuid())
+  queueItemId String
+  env         WpEnv
+  status      DeploymentLogStatus
+  requestBody Json?
+  responseBody Json?
+  errorMessage String?
+  durationMs  Int?
+  pushedBy    String?
+  createdAt   DateTime             @default(now())
+
+  queueItem   DeploymentQueueItem  @relation(fields: [queueItemId], references: [id], onDelete: Cascade)
+
+  @@map("deployment_logs")
+}
+
+model WPPlugin {
+  id          String          @id @default(cuid())
+  projectId   String
+  name        String
+  slug        String
+  version     String?
+  status      WPPluginStatus  @default(INACTIVE)
+  description String?
+  lastUpdatedAt DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, slug])
+  @@map("wp_plugins")
+}
+
+model WPTheme {
+  id          String          @id @default(cuid())
+  projectId   String
+  name        String
+  slug        String
+  version     String?
+  status      WPThemeStatus   @default(INACTIVE)
+  description String?
+  lastUpdatedAt DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, slug])
+  @@map("wp_themes")
+}
+
+model Maintenance {
+  id                String   @id @default(cuid())
+  uptimeStatus      String   @default("OPERATIONAL")
+  backupLog         String   @default("")
+  performanceNotes  String   @default("")
+  updatedAt         DateTime @updatedAt
+
+  @@map("maintenance")
 }

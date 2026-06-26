@@ -47,7 +47,7 @@ const developmentRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(422).send({ error: 'Development brief is required before passing the Soft Gate.' });
     }
 
-    const doneTasks  = dev.tasks.filter((t: { status: string }) => t.status === 'DONE').length;
+    const doneTasks  = dev.tasks.filter((t: { status: string }) => t.status === 'LIVE' || t.status === 'MAINTENANCE').length;
     const totalTasks = dev.tasks.length;
 
     const warnings: string[] = [];
@@ -83,7 +83,10 @@ const developmentRoutes: FastifyPluginAsync = async (app) => {
   app.post<{ Params: { id: string }; Body: DevTaskBody }>(
     '/:id/development/tasks',
     auth,
-    async (request) => {
+    async (request, reply) => {
+      if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body)) {
+        return reply.code(400).send({ error: 'Request body must be a valid JSON object' });
+      }
       const body = devTaskSchema.parse(request.body);
       const dev = await app.prisma.development.upsert({
         where:  { projectId: request.params.id },
@@ -91,7 +94,7 @@ const developmentRoutes: FastifyPluginAsync = async (app) => {
         create: { projectId: request.params.id },
       });
       return app.prisma.devTask.create({
-        data: { ...body, developmentId: dev.id },
+        data: { ...body, dueDate: body.dueDate ? new Date(body.dueDate) : undefined, developmentId: dev.id },
       });
     },
   );
@@ -104,7 +107,7 @@ const developmentRoutes: FastifyPluginAsync = async (app) => {
       const body = devTaskSchema.partial().parse(request.body);
       return app.prisma.devTask.update({
         where: { id: request.params.taskId },
-        data:  body,
+        data:  { ...body, dueDate: body.dueDate ? new Date(body.dueDate) : undefined },
       });
     },
   );

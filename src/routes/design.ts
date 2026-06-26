@@ -51,23 +51,23 @@ const designRoutes: FastifyPluginAsync = async (app) => {
       include: { tasks: true },
     });
 
-    if (!design?.brief) {
-      return reply.code(422).send({ error: 'Design brief is required before passing the Soft Gate.' });
-    }
+    const doneTasks = (design?.tasks ?? []).filter((t: { status: string }) => t.status === 'DONE').length;
+    const totalTasks = (design?.tasks ?? []).length;
 
-    const doneTasks = design.tasks.filter((t: { status: string }) => t.status === 'DONE').length;
-    const totalTasks = design.tasks.length;
-
-    // Soft gate: warn but allow if tasks exist and at least one done
+    // Soft gate: collect warnings but always allow progression
     const warnings: string[] = [];
+    if (!design?.brief) {
+      warnings.push('Design brief has not been filled in yet.');
+    }
     if (totalTasks > 0 && doneTasks < totalTasks) {
       warnings.push(`${totalTasks - doneTasks} design task(s) still incomplete.`);
     }
 
     await app.prisma.$transaction([
-      app.prisma.design.update({
+      app.prisma.design.upsert({
         where: { projectId: request.params.id },
-        data: { completedAt: new Date() },
+        update: { completedAt: new Date() },
+        create: { projectId: request.params.id, completedAt: new Date() },
       }),
       app.prisma.pipelineEntry.update({
         where: { projectId_stage: { projectId: request.params.id, stage: 'DESIGN' } },

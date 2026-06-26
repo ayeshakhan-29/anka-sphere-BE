@@ -129,10 +129,32 @@ const writtenContentRoutes: FastifyPluginAsync = async (app) => {
     auth,
     async (request) => {
       const { status } = updatePageStatusSchema.parse(request.body);
-      return app.prisma.contentPage.update({
+      const page = await app.prisma.contentPage.update({
         where: { id: request.params.pageId },
         data: { status },
       });
+
+      if (status === 'APPROVED') {
+        // Auto-populate in Staging deployment queue if not already there
+        const existing = await app.prisma.deploymentQueueItem.findFirst({
+          where: { projectId: request.params.id, pageId: page.id },
+        });
+        if (!existing) {
+          await app.prisma.deploymentQueueItem.create({
+            data: {
+              projectId: request.params.id,
+              contentKind: 'PAGE',
+              pageId: page.id,
+              title: page.title,
+              slug: page.slug,
+              targetEnv: 'STAGING',
+              status: 'QUEUED',
+            },
+          });
+        }
+      }
+
+      return page;
     },
   );
 

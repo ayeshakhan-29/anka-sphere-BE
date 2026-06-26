@@ -7,7 +7,12 @@ import projectRoutes from './routes/projects.js';
 import writtenContentRoutes from './routes/written-content.js';
 import designRoutes from './routes/design.js';
 import developmentRoutes from './routes/development.js';
+import developmentWpConnectionsRoutes from './routes/development-wp-connections.js';
+import developmentDeploymentRoutes from './routes/deployment.js';
+import wpPluginsThemesRoutes from './routes/wp-plugins-themes.js';
 import marketingRoutes from './routes/marketing.js';
+import maintenanceRoutes from './routes/maintenance.js';
+
 import { errorHandler } from './middleware/error-handler.js';
 
 export async function buildApp() {
@@ -25,6 +30,7 @@ export async function buildApp() {
   await app.register(cors, {
     origin: process.env.FRONTEND_URL ?? 'http://localhost:4200',
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });
 
   // Plugins
@@ -43,7 +49,11 @@ export async function buildApp() {
   await app.register(writtenContentRoutes, { prefix: '/projects' });
   await app.register(designRoutes, { prefix: '/projects' });
   await app.register(developmentRoutes, { prefix: '/projects' });
+  await app.register(developmentWpConnectionsRoutes, { prefix: '/projects' });
+  await app.register(developmentDeploymentRoutes, { prefix: '/projects' });
+  await app.register(wpPluginsThemesRoutes, { prefix: '/projects' });
   await app.register(marketingRoutes,   { prefix: '/projects' });
+  await app.register(maintenanceRoutes, { prefix: '/maintenance' });
 
   return app;
 }
