@@ -394,6 +394,7 @@ model ContentPage {
   writtenContent WrittenContent @relation(fields: [writtenContentId], references: [id], onDelete: Cascade)
   comments       Comment[]
   devTasks       DevTask[]
+  deploymentQueueItems DeploymentQueueItem[]
 
   @@map("content_pages")
 }
@@ -413,6 +414,9 @@ model Development {
   // Maintenance fields
   performanceNotes String?
   backupLog        Json?
+  changeLog        Json?
+  qaTemplate       Json?
+  maintenanceRequests Json?
   uptimeStatus       String?
   uptimeResponseTime Int?
   uptimeLastChecked  DateTime?
@@ -561,6 +565,7 @@ model DeploymentQueueItem {
   updatedAt   DateTime        @updatedAt
 
   project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  page        ContentPage?     @relation(fields: [pageId], references: [id], onDelete: SetNull)
   logs        DeploymentLog[]
 
   @@map("deployment_queue_items")

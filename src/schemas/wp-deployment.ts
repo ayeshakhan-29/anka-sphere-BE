@@ -36,7 +36,7 @@ export const deploymentQueueUpdateSchema = z.object({
 
 export const deployRequestSchema = z.object({
   queueItemId: z.string(),
-  targetEnv: z.enum(['STAGING', 'PRODUCTION']),
+  targetEnv: z.enum(['DEV', 'STAGING', 'PRODUCTION']),
   confirmProduction: z.boolean().default(false),
 });
 

@@ -49,7 +49,10 @@ const developmentDeploymentRoutes: FastifyPluginAsync = async (app) => {
       return app.prisma.deploymentQueueItem.findMany({
         where: { projectId: request.params.id },
         orderBy: { createdAt: 'desc' },
-        include: { logs: { orderBy: { createdAt: 'desc' } } },
+        include: {
+          page: true,
+          logs: { orderBy: { createdAt: 'desc' } },
+        },
       });
     },
   );
@@ -126,6 +129,7 @@ const developmentDeploymentRoutes: FastifyPluginAsync = async (app) => {
       const body = deployRequestSchema.parse(request.body);
       const item = await app.prisma.deploymentQueueItem.findUnique({
         where: { id: body.queueItemId },
+        include: { page: true },
       });
       if (!item) {
         return reply.code(404).send({ error: 'Queue item not found' });
@@ -148,18 +152,11 @@ const developmentDeploymentRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(400).send({ error: `No WP connection configured for ${body.targetEnv}` });
       }
 
-      // Fetch content from ContentPage
-      let contentBody = item.title;
-      let seoTitle: string | undefined;
-      let seoDescription: string | undefined;
-      if (item.pageId) {
-        const page = await app.prisma.contentPage.findUnique({ where: { id: item.pageId } });
-        if (page) {
-          contentBody = page.body ?? item.title;
-          seoTitle = page.seoTitle ?? undefined;
-          seoDescription = page.seoDescription ?? undefined;
-        }
-      }
+      // Fetch content from the approved ContentPage linked to this queue item.
+      const linkedPage = item.pageId && !item.page ? await app.prisma.contentPage.findUnique({ where: { id: item.pageId } }) : item.page;
+      const contentBody = linkedPage?.body ?? item.title;
+      const seoTitle = linkedPage?.seoTitle ?? undefined;
+      const seoDescription = linkedPage?.seoDescription ?? undefined;
 
       const appPassword = decryptText(connection.wpAppPasswordEnc);
       const endpoint = item.contentKind === 'PAGE' ? 'pages' : 'posts';
@@ -268,7 +265,7 @@ const developmentDeploymentRoutes: FastifyPluginAsync = async (app) => {
       });
 
       if (!writtenContent) {
-        return reply.code(404).send({ error: 'Written content not found for this project' });
+        return { count: 0, items: [] };
       }
 
       const pagesToSync = writtenContent.pages.filter(p => !existingPageIds.has(p.id));
@@ -305,6 +302,24 @@ const developmentDeploymentRoutes: FastifyPluginAsync = async (app) => {
     async (request) => {
       return app.prisma.deploymentLog.findMany({
         where: { queueItemId: request.params.itemId },
+        orderBy: { createdAt: 'desc' },
+      });
+    },
+  );
+
+  // GET /projects/:id/development/logs
+  app.get<{ Params: { id: string } }>(
+    '/:id/development/logs',
+    auth,
+    async (request) => {
+      const items = await app.prisma.deploymentQueueItem.findMany({
+        where: { projectId: request.params.id },
+        select: { id: true },
+      });
+      const queueItemIds = items.map(i => i.id);
+      if (queueItemIds.length === 0) return [];
+      return app.prisma.deploymentLog.findMany({
+        where: { queueItemId: { in: queueItemIds } },
         orderBy: { createdAt: 'desc' },
       });
     },

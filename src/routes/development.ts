@@ -6,6 +6,17 @@ import {
   DevTaskBody,
 } from '../schemas/development.js';
 
+type MaintenanceRequestBody = {
+  title?: string;
+  description?: string;
+  priority?: 'LOW' | 'MEDIUM' | 'HIGH';
+  target?: string;
+  requestedBy?: string;
+};
+
+function arrayFromJson(value: unknown): any[] {
+  return Array.isArray(value) ? value : [];
+}
 const developmentRoutes: FastifyPluginAsync = async (app) => {
   const auth = { preHandler: [app.authenticate] };
 
@@ -121,6 +132,209 @@ const developmentRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(204).send();
     },
   );
+  // GET /projects/:id/development/changelog
+  app.get<{ Params: { id: string } }>('/:id/development/changelog', auth, async (request) => {
+    const dev = await app.prisma.development.upsert({
+      where: { projectId: request.params.id },
+      update: {},
+      create: { projectId: request.params.id },
+    });
+    return Array.isArray(dev.changeLog) ? dev.changeLog : [];
+  });
+
+  // POST /projects/:id/development/changelog
+  app.post<{ Params: { id: string }; Body: { pageName?: string; description?: string; changedBy?: string; changedAt?: string } }>(
+    '/:id/development/changelog',
+    auth,
+    async (request, reply) => {
+      const body = request.body ?? {};
+      if (!body.pageName || !body.description) {
+        return reply.code(400).send({ error: 'pageName and description are required' });
+      }
+      const dev = await app.prisma.development.upsert({
+        where: { projectId: request.params.id },
+        update: {},
+        create: { projectId: request.params.id },
+      });
+      const current = Array.isArray(dev.changeLog) ? dev.changeLog as any[] : [];
+      const entry = {
+        id: `cl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        projectId: request.params.id,
+        pageName: body.pageName,
+        description: body.description,
+        changedBy: body.changedBy || request.user.email,
+        changedAt: body.changedAt || new Date().toISOString(),
+      };
+      await app.prisma.development.update({
+        where: { projectId: request.params.id },
+        data: { changeLog: [entry, ...current] as any },
+      });
+      return reply.code(201).send(entry);
+    },
+  );
+
+  // DELETE /projects/:id/development/changelog/:entryId
+  app.delete<{ Params: { id: string; entryId: string } }>(
+    '/:id/development/changelog/:entryId',
+    auth,
+    async (request, reply) => {
+      const dev = await app.prisma.development.findUnique({ where: { projectId: request.params.id } });
+      const current = Array.isArray(dev?.changeLog) ? dev!.changeLog as any[] : [];
+      await app.prisma.development.upsert({
+        where: { projectId: request.params.id },
+        update: { changeLog: current.filter((entry) => entry.id !== request.params.entryId) as any },
+        create: { projectId: request.params.id, changeLog: [] as any },
+      });
+      return reply.code(204).send();
+    },
+  );
+
+
+  // PUT /projects/:id/development/qa-template
+  app.put<{ Params: { id: string }; Body: { items?: { id: string; label: string }[] } }>(
+    '/:id/development/qa-template',
+    auth,
+    async (request) => {
+      const items = Array.isArray(request.body?.items) ? request.body.items : [];
+      const dev = await app.prisma.development.upsert({
+        where: { projectId: request.params.id },
+        update: { qaTemplate: items as any },
+        create: { projectId: request.params.id, qaTemplate: items as any },
+      });
+      return { items: arrayFromJson(dev.qaTemplate) };
+    },
+  );
+
+  // POST /projects/:id/development/maintenance-requests
+  app.post<{ Params: { id: string }; Body: MaintenanceRequestBody }>(
+    '/:id/development/maintenance-requests',
+    auth,
+    async (request, reply) => {
+      const body = request.body ?? {};
+      if (!body.title || !body.description) {
+        return reply.code(400).send({ error: 'title and description are required' });
+      }
+      const dev = await app.prisma.development.upsert({
+        where: { projectId: request.params.id },
+        update: {},
+        create: { projectId: request.params.id },
+      });
+      const current = arrayFromJson(dev.maintenanceRequests);
+      const entry = {
+        id: `mr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        title: body.title,
+        description: body.description,
+        priority: body.priority ?? 'MEDIUM',
+        target: body.target ?? '',
+        requestedBy: body.requestedBy || request.user.email,
+        status: 'OPEN',
+        createdAt: new Date().toISOString(),
+      };
+      await app.prisma.development.update({
+        where: { projectId: request.params.id },
+        data: { maintenanceRequests: [entry, ...current] as any },
+      });
+      return reply.code(201).send(entry);
+    },
+  );
+
+  // PATCH /projects/:id/development/maintenance-requests/:requestId
+  app.patch<{ Params: { id: string; requestId: string }; Body: { status?: string } }>(
+    '/:id/development/maintenance-requests/:requestId',
+    auth,
+    async (request, reply) => {
+      const dev = await app.prisma.development.findUnique({ where: { projectId: request.params.id } });
+      const current = arrayFromJson(dev?.maintenanceRequests);
+      const updated = current.map(entry => entry.id === request.params.requestId ? { ...entry, status: request.body?.status ?? entry.status } : entry);
+      await app.prisma.development.upsert({
+        where: { projectId: request.params.id },
+        update: { maintenanceRequests: updated as any },
+        create: { projectId: request.params.id, maintenanceRequests: [] as any },
+      });
+      return reply.send(updated.find(entry => entry.id === request.params.requestId) ?? null);
+    },
+  );
+
+  // DELETE /projects/:id/development/maintenance-requests/:requestId
+  app.delete<{ Params: { id: string; requestId: string } }>(
+    '/:id/development/maintenance-requests/:requestId',
+    auth,
+    async (request, reply) => {
+      const dev = await app.prisma.development.findUnique({ where: { projectId: request.params.id } });
+      const current = arrayFromJson(dev?.maintenanceRequests);
+      await app.prisma.development.upsert({
+        where: { projectId: request.params.id },
+        update: { maintenanceRequests: current.filter(entry => entry.id !== request.params.requestId) as any },
+        create: { projectId: request.params.id, maintenanceRequests: [] as any },
+      });
+      return reply.code(204).send();
+    },
+  );
+
+  // POST /projects/:id/development/uptime-check
+  app.post<{ Params: { id: string } }>(
+    '/:id/development/uptime-check',
+    auth,
+    async (request) => {
+      const dev = await app.prisma.development.upsert({
+        where: { projectId: request.params.id },
+        update: {},
+        create: { projectId: request.params.id },
+      });
+      const liveUrl = dev.liveUrl;
+      const checkedAt = new Date();
+      if (!liveUrl) {
+        const updated = await app.prisma.development.update({
+          where: { projectId: request.params.id },
+          data: { uptimeStatus: 'UNKNOWN', uptimeResponseTime: null, uptimeLastChecked: checkedAt },
+        });
+        return { status: updated.uptimeStatus, responseTime: updated.uptimeResponseTime, lastChecked: updated.uptimeLastChecked };
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 6000);
+      const started = Date.now();
+      let status = 'DOWN';
+      let responseTime: number | null = null;
+      try {
+        const res = await fetch(liveUrl, { method: 'HEAD', signal: controller.signal });
+        responseTime = Date.now() - started;
+        status = res.ok ? 'UP' : 'DEGRADED';
+      } catch {
+        responseTime = Date.now() - started;
+        status = 'DOWN';
+      } finally {
+        clearTimeout(timeout);
+      }
+
+      const updated = await app.prisma.development.update({
+        where: { projectId: request.params.id },
+        data: { uptimeStatus: status, uptimeResponseTime: responseTime, uptimeLastChecked: checkedAt },
+      });
+      return { status: updated.uptimeStatus, responseTime: updated.uptimeResponseTime, lastChecked: updated.uptimeLastChecked };
+    },
+  );
+  // POST /projects/:id/development/backup
+  app.post<{ Params: { id: string } }>('/:id/development/backup', auth, async (request) => {
+    const dev = await app.prisma.development.upsert({
+      where: { projectId: request.params.id },
+      update: {},
+      create: { projectId: request.params.id },
+    });
+    const current = Array.isArray(dev.backupLog) ? dev.backupLog as any[] : [];
+    const entry = {
+      date: new Date().toISOString(),
+      provider: 'Manual',
+      size: 'N/A',
+      note: `Triggered by ${request.user.email}`,
+    };
+    const backupHistory = [entry, ...current];
+    await app.prisma.development.update({
+      where: { projectId: request.params.id },
+      data: { backupLog: backupHistory as any },
+    });
+    return { message: 'Backup logged', backupHistory };
+  });
 };
 
 export default developmentRoutes;

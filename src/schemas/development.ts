@@ -8,8 +8,12 @@ export const upsertDevelopmentBriefSchema = z.object({
   notes:             z.string().optional(),
   performanceNotes:  z.string().optional(),
   backupLog:         z.any().optional(),
+  changeLog:         z.any().optional(),
+  qaTemplate:        z.any().optional(),
+  maintenanceRequests: z.any().optional(),
   uptimeStatus:      z.string().optional(),
   uptimeResponseTime: z.number().optional(),
+  uptimeLastChecked: z.string().datetime().optional(),
 });
 
 export const devTaskSchema = z.object({
@@ -25,4 +29,3 @@ export const devTaskSchema = z.object({
 
 export type UpsertDevelopmentBriefBody = z.infer<typeof upsertDevelopmentBriefSchema>;
 export type DevTaskBody                = z.infer<typeof devTaskSchema>;
-

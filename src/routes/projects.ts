@@ -119,8 +119,8 @@ const projectRoutes: FastifyPluginAsync = async (app) => {
     const profiling = await app.prisma.projectProfiling.findUnique({
       where: { projectId: request.params.id },
     });
-    if (!profiling?.companyName || !profiling?.objectives || !profiling?.primaryKeywords) {
-      return reply.code(422).send({ error: 'Required profiling fields missing before gate can be approved.' });
+    if (!profiling?.companyName) {
+      return reply.code(422).send({ error: 'Company / Brand Name is required before gate can be approved.' });
     }
     await app.prisma.$transaction([
       app.prisma.projectProfiling.update({
@@ -279,3 +279,4 @@ const projectRoutes: FastifyPluginAsync = async (app) => {
 };
 
 export default projectRoutes;
+
