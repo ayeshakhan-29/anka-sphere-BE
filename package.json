@@ -7,7 +7,7 @@
     "postinstall": "prisma generate",
     "dev": "prisma db push && tsx prisma/seed.ts && tsx watch src/server.ts",
     "build": "prisma generate && tsc",
-    "start": "tsx prisma/seed.ts && node dist/server.js",
+    "start": "prisma migrate deploy && tsx prisma/seed.ts && node dist/server.js",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
