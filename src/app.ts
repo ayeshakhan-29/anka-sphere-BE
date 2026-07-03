@@ -26,9 +26,22 @@ export async function buildApp() {
     },
   });
 
-  // CORS
+  // CORS - Allow multiple origins
+  const allowedOrigins = [
+    'http://localhost:4200',
+    'https://anka-sphere-production.up.railway.app',
+    process.env.FRONTEND_URL,
+  ].filter(Boolean);
+
   await app.register(cors, {
-    origin: process.env.FRONTEND_URL ?? 'http://localhost:4200',
+    origin: (origin, cb) => {
+      // Allow requests with no origin (like mobile apps, Postman, or same-origin)
+      if (!origin || allowedOrigins.includes(origin)) {
+        cb(null, true);
+      } else {
+        cb(new Error('Not allowed by CORS'), false);
+      }
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });
