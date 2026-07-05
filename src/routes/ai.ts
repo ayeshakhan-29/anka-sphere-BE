@@ -3,16 +3,16 @@ import { z } from 'zod';
 
 const generateImageSchema = z.object({
   prompt: z.string().min(3).max(4000),
-  size: z.enum(['1024x1024', '1792x1024', '1024x1792']).default('1024x1024'),
+  size: z.enum(['1024x1024', '1536x1024', '1024x1536']).default('1024x1024'),
   saveToAssets: z.boolean().default(false),
   assetName: z.string().optional(),
 });
 
-// DALL-E 3 standard-quality pricing (USD per image)
-const DALLE3_COST: Record<string, number> = {
+// gpt-image-1 medium-quality pricing (USD per image)
+const IMAGE_COST: Record<string, number> = {
   '1024x1024': 0.04,
-  '1792x1024': 0.08,
-  '1024x1792': 0.08,
+  '1536x1024': 0.06,
+  '1024x1536': 0.06,
 };
 
 const aiRoutes: FastifyPluginAsync = async (app) => {
@@ -34,12 +34,12 @@ const aiRoutes: FastifyPluginAsync = async (app) => {
     const logUsage = (success: boolean) =>
       app.prisma.apiUsageEvent.create({
         data: {
-          provider: 'OPENAI_DALLE3',
+          provider: 'OPENAI_GPT_IMAGE_1',
           operation: 'image.generate',
           projectId: request.params.id,
           userName: user?.name,
           prompt: body.prompt.slice(0, 500),
-          costUsd: success ? DALLE3_COST[body.size] : 0,
+          costUsd: success ? IMAGE_COST[body.size] : 0,
           success,
         },
       });
@@ -50,31 +50,35 @@ const aiRoutes: FastifyPluginAsync = async (app) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
-          model: 'dall-e-3',
+          model: 'gpt-image-1',
           prompt: body.prompt,
           n: 1,
           size: body.size,
-          quality: 'standard',
-          response_format: 'b64_json',
+          quality: 'medium',
         }),
       });
     } catch (err) {
       await logUsage(false);
-      app.log.error({ err }, 'DALL-E request failed');
+      app.log.error({ err }, 'Image generation request failed');
       return reply.code(502).send({ error: 'Could not reach the image generation service.' });
     }
 
     if (!res.ok) {
       await logUsage(false);
       const detail = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-      app.log.error({ status: res.status, detail }, 'DALL-E returned an error');
+      app.log.error({ status: res.status, detail }, 'Image API returned an error');
       return reply
         .code(res.status === 401 ? 503 : 422)
         .send({ error: detail?.error?.message ?? 'Image generation failed.' });
     }
 
-    const json = (await res.json()) as { data: { b64_json: string; revised_prompt?: string }[] };
-    const b64 = json.data[0]?.b64_json;
+    const json = (await res.json()) as { data: { b64_json?: string; url?: string; revised_prompt?: string }[] };
+    let b64 = json.data[0]?.b64_json;
+    if (!b64 && json.data[0]?.url) {
+      // API returned a short-lived URL — download and inline it so the asset never expires
+      const imgRes = await fetch(json.data[0].url);
+      if (imgRes.ok) b64 = Buffer.from(await imgRes.arrayBuffer()).toString('base64');
+    }
     if (!b64) {
       await logUsage(false);
       return reply.code(502).send({ error: 'Image generation returned no image.' });
@@ -96,7 +100,7 @@ const aiRoutes: FastifyPluginAsync = async (app) => {
           name: body.assetName ?? `AI · ${body.prompt.slice(0, 60)}`,
           type: 'IMAGE',
           url: dataUri,
-          notes: `AI-generated (DALL-E 3). Prompt: ${body.prompt.slice(0, 300)}`,
+          notes: `AI-generated (gpt-image-1). Prompt: ${body.prompt.slice(0, 300)}`,
         },
       });
     }
@@ -104,7 +108,7 @@ const aiRoutes: FastifyPluginAsync = async (app) => {
     return {
       image: dataUri,
       revisedPrompt: json.data[0]?.revised_prompt ?? null,
-      costUsd: DALLE3_COST[body.size],
+      costUsd: IMAGE_COST[body.size],
       asset,
     };
   });
