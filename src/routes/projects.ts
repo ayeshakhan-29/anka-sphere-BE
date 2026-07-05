@@ -13,6 +13,7 @@ import {
   CompetitorBody,
   MilestoneBody,
 } from '../schemas/project.js';
+import { notifyGateHandoff } from '../services/handoff.js';
 
 const projectRoutes: FastifyPluginAsync = async (app) => {
   const auth = { preHandler: [app.authenticate] };
@@ -140,6 +141,7 @@ const projectRoutes: FastifyPluginAsync = async (app) => {
         data: { currentStage: 'WRITTEN_CONTENT' },
       }),
     ]);
+    notifyGateHandoff(app, request.params.id, 'PROFILING', 'WRITTEN_CONTENT');
     return { message: 'Profiling approved. Written Content stage is now unlocked.' };
   });
 

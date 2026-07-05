@@ -7,6 +7,7 @@ import {
   ContentPageBody,
   UpdatePageStatusBody,
 } from '../schemas/written-content.js';
+import { notifyGateHandoff } from '../services/handoff.js';
 
 const writtenContentRoutes: FastifyPluginAsync = async (app) => {
   const auth = { preHandler: [app.authenticate] };
@@ -73,6 +74,7 @@ const writtenContentRoutes: FastifyPluginAsync = async (app) => {
       }),
     ]);
 
+    notifyGateHandoff(app, request.params.id, 'WRITTEN_CONTENT', 'DESIGN');
     return { message: 'Written Content approved. Design stage is now unlocked.' };
   });
 

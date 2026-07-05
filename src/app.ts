@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import prismaPlugin from './plugins/prisma.js';
 import authPlugin from './plugins/auth.js';
+import emailPlugin from './plugins/email.js';
 import authRoutes from './routes/auth.js';
 import projectRoutes from './routes/projects.js';
 import writtenContentRoutes from './routes/written-content.js';
@@ -12,6 +13,9 @@ import developmentDeploymentRoutes from './routes/deployment.js';
 import wpPluginsThemesRoutes from './routes/wp-plugins-themes.js';
 import marketingRoutes from './routes/marketing.js';
 import maintenanceRoutes from './routes/maintenance.js';
+import reportRoutes from './routes/reports.js';
+import aiRoutes from './routes/ai.js';
+import { startReportScheduler } from './services/report-scheduler.js';
 
 import { errorHandler } from './middleware/error-handler.js';
 
@@ -49,6 +53,7 @@ export async function buildApp() {
   // Plugins
   await app.register(prismaPlugin);
   await app.register(authPlugin);
+  await app.register(emailPlugin);
 
   // Error handler
   app.setErrorHandler(errorHandler);
@@ -67,6 +72,10 @@ export async function buildApp() {
   await app.register(wpPluginsThemesRoutes, { prefix: '/projects' });
   await app.register(marketingRoutes,   { prefix: '/projects' });
   await app.register(maintenanceRoutes, { prefix: '/maintenance' });
+  await app.register(reportRoutes,      { prefix: '/projects' });
+  await app.register(aiRoutes,          { prefix: '/projects' });
+
+  startReportScheduler(app);
 
   return app;
 }

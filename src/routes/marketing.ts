@@ -5,6 +5,7 @@ import {
   UpsertMarketingBody,
   MarketingTaskBody,
 } from '../schemas/marketing.js';
+import { notifyGateHandoff } from '../services/handoff.js';
 
 const marketingRoutes: FastifyPluginAsync = async (app) => {
   const auth = { preHandler: [app.authenticate] };
@@ -66,6 +67,7 @@ const marketingRoutes: FastifyPluginAsync = async (app) => {
       }),
     ]);
 
+    notifyGateHandoff(app, request.params.id, 'MARKETING', null);
     return reply.code(200).send({ message: 'Marketing stage approved. Project marked as completed.', warnings });
   });
 
