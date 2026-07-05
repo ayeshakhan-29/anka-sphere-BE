@@ -1,5 +1,6 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { chatJSON, AiUnavailableError, AiRequestError } from '../services/openai.js';
 
 const generateImageSchema = z.object({
   prompt: z.string().min(3).max(4000),
@@ -202,6 +203,127 @@ const aiRoutes: FastifyPluginAsync = async (app) => {
       };
     },
   );
+
+  // POST /projects/:id/social/ai-captions — write A/B caption variants in the client's brand voice
+  const captionSchema = z.object({
+    platform: z.enum(['Instagram', 'TikTok', 'Facebook', 'LinkedIn', 'X']),
+    topic: z.string().min(3).max(1000),
+  });
+  const PLATFORM_LIMIT: Record<string, number> = {
+    Instagram: 2200, TikTok: 2200, Facebook: 63206, LinkedIn: 3000, X: 280,
+  };
+
+  app.post<{ Params: { id: string } }>('/:id/social/ai-captions', auth, async (request, reply) => {
+    const body = captionSchema.parse(request.body);
+
+    const [project, user] = await Promise.all([
+      app.prisma.project.findUnique({
+        where: { id: request.params.id },
+        include: { profiling: true, marketing: true },
+      }),
+      app.prisma.user.findUnique({ where: { id: request.user.sub }, select: { name: true } }),
+    ]);
+    if (!project) return reply.code(404).send({ error: 'Project not found' });
+
+    const p = project.profiling;
+    const brandContext = [
+      `Client: ${p?.companyName ?? project.clientName}`,
+      p?.industry && `Industry: ${p.industry}`,
+      p?.about && `About: ${p.about}`,
+      p?.brandVoice && `Brand voice: ${p.brandVoice}`,
+      p?.tagline && `Tagline: ${p.tagline}`,
+      p?.brandDislikes && `Never do: ${p.brandDislikes}`,
+      project.marketing?.targetAudience && `Target audience: ${project.marketing.targetAudience}`,
+    ].filter(Boolean).join('\n');
+
+    const limit = PLATFORM_LIMIT[body.platform];
+    try {
+      const result = await chatJSON<{ variantA: string; variantB: string; hashtags: string[] }>(app, {
+        operation: 'caption.generate',
+        projectId: request.params.id,
+        userName: user?.name,
+        system:
+          `You are a senior social media copywriter at a digital agency. Write platform-native captions ` +
+          `that sound like the client's brand, never generic marketing filler. Respond with a single JSON object: ` +
+          `{"variantA": string, "variantB": string, "hashtags": string[]}. ` +
+          `variantA is short and punchy; variantB is longer, storytelling style. ` +
+          `Both must fit within ${limit} characters for ${body.platform} (including spacing and emoji, excluding hashtags). ` +
+          `hashtags: 8-12 relevant hashtags, each starting with #. Do not put hashtags inside the variants.`,
+        user: `Brand context:\n${brandContext}\n\nPost topic / instructions:\n${body.topic}`,
+      });
+      return {
+        variantA: String(result.variantA ?? ''),
+        variantB: String(result.variantB ?? ''),
+        hashtags: Array.isArray(result.hashtags) ? result.hashtags.map(String) : [],
+      };
+    } catch (err) {
+      if (err instanceof AiUnavailableError) return reply.code(503).send({ error: 'AI caption writing is not configured (missing OPENAI_API_KEY).' });
+      if (err instanceof AiRequestError) return reply.code(err.status).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  // POST /projects/:id/reports/ai-draft — write a report narrative from live project data
+  const reportDraftSchema = z.object({ type: z.enum(['WEEKLY', 'MONTHLY']) });
+
+  app.post<{ Params: { id: string } }>('/:id/reports/ai-draft', auth, async (request, reply) => {
+    const body = reportDraftSchema.parse(request.body);
+
+    const [project, user] = await Promise.all([
+      app.prisma.project.findUnique({
+        where: { id: request.params.id },
+        include: {
+          pipeline: true,
+          milestones: true,
+          design: { include: { tasks: true } },
+          development: { include: { tasks: true } },
+          marketing: { include: { tasks: true } },
+        },
+      }),
+      app.prisma.user.findUnique({ where: { id: request.user.sub }, select: { name: true } }),
+    ]);
+    if (!project) return reply.code(404).send({ error: 'Project not found' });
+
+    const tasks = [
+      ...(project.design?.tasks ?? []).map(t => ({ dept: 'Design', title: t.title, status: String(t.status) })),
+      ...(project.development?.tasks ?? []).map(t => ({ dept: 'Development', title: t.title, status: String(t.status) })),
+      ...(project.marketing?.tasks ?? []).map(t => ({ dept: 'Marketing', title: t.title, status: String(t.status) })),
+    ];
+    const facts = [
+      `Project: ${project.name} for ${project.clientName}`,
+      `Current stage: ${project.currentStage} (stages approved: ${project.pipeline.filter(s => s.status === 'APPROVED').length}/5)`,
+      `Milestones done: ${project.milestones.filter(m => m.status === 'DONE').length}/${project.milestones.length}`,
+      `Tasks (${tasks.length}):`,
+      ...tasks.slice(0, 40).map(t => `- [${t.dept}] ${t.title} — ${t.status}`),
+    ].join('\n');
+
+    try {
+      const result = await chatJSON<{ summary: string; highlights: string; blockers: string; nextSteps: string }>(app, {
+        operation: 'report.draft',
+        projectId: request.params.id,
+        userName: user?.name,
+        system:
+          `You write concise client-facing agency status reports. Base every claim strictly on the facts given — ` +
+          `never invent metrics, dates, or events. Plain professional English, no buzzwords. ` +
+          `Respond with a single JSON object: {"summary": string, "highlights": string, "blockers": string, "nextSteps": string}. ` +
+          `summary: 3-5 sentences on overall ${body.type === 'WEEKLY' ? 'weekly' : 'monthly'} progress. ` +
+          `highlights: 2-4 bullet lines (plain text, one per line, no markdown). ` +
+          `blockers: risks or open items inferred from incomplete tasks, or "No blockers at this time." ` +
+          `nextSteps: 2-4 bullet lines of what the team tackles next, inferred from TODO/IN_PROGRESS tasks.`,
+        user: facts,
+      });
+      return {
+        summary: String(result.summary ?? ''),
+        highlights: String(result.highlights ?? ''),
+        blockers: String(result.blockers ?? ''),
+        nextSteps: String(result.nextSteps ?? ''),
+      };
+    } catch (err) {
+      if (err instanceof AiUnavailableError) return reply.code(503).send({ error: 'AI report drafting is not configured (missing OPENAI_API_KEY).' });
+      if (err instanceof AiRequestError) return reply.code(err.status).send({ error: err.message });
+      throw err;
+    }
+  });
 
   // GET /projects/:id/design/ai-usage — usage tracker (project + workspace totals)
   app.get<{ Params: { id: string } }>('/:id/design/ai-usage', auth, async (request) => {

@@ -1,5 +1,6 @@
 import cron from 'node-cron';
 import { FastifyInstance } from 'fastify';
+import { chatJSON } from './openai.js';
 
 function startOfWeek(d: Date): Date {
   const date = new Date(d);
@@ -64,15 +65,44 @@ async function generateDrafts(app: FastifyInstance, type: 'WEEKLY' | 'MONTHLY'):
     const stats = await projectStats(app, id);
     if (!stats) continue;
 
-    const summary =
+    // Template fallback — always available
+    let summary =
       type === 'WEEKLY'
         ? `${stats.project.name} for ${stats.project.clientName} is in the ${stats.project.currentStage} stage. ` +
           `${stats.approvedStages} of 5 pipeline stages approved; ${stats.done} of ${stats.tasks} tasks done.`
         : `${stats.project.name} progressed through the ${stats.project.currentStage} stage this month. ` +
           `${stats.msDone} of ${stats.msTotal} milestones completed; ${stats.done} of ${stats.tasks} tasks done overall.`;
+    let highlights: string | undefined;
+    let nextSteps: string | undefined;
+
+    // Upgrade to an LLM-written narrative when a key is configured
+    if (process.env.OPENAI_API_KEY) {
+      try {
+        const draft = await chatJSON<{ summary: string; highlights: string; nextSteps: string }>(app, {
+          operation: 'report.auto-draft',
+          projectId: id,
+          system:
+            `You write concise client-facing agency status reports. Base every claim strictly on the facts given — ` +
+            `never invent metrics, dates, or events. Plain professional English. ` +
+            `Respond with a single JSON object: {"summary": string, "highlights": string, "nextSteps": string}. ` +
+            `summary: 3-4 sentences of ${type === 'WEEKLY' ? 'weekly' : 'monthly'} progress. ` +
+            `highlights and nextSteps: 2-3 plain-text bullet lines each, one per line.`,
+          user:
+            `Project: ${stats.project.name} for ${stats.project.clientName}\n` +
+            `Current stage: ${stats.project.currentStage} (${stats.approvedStages}/5 stages approved)\n` +
+            `Tasks done: ${stats.done}/${stats.tasks}\n` +
+            `Milestones done: ${stats.msDone}/${stats.msTotal}`,
+        });
+        if (draft.summary) summary = draft.summary;
+        highlights = draft.highlights || undefined;
+        nextSteps = draft.nextSteps || undefined;
+      } catch (err) {
+        app.log.warn({ err, projectId: id }, 'AI report narrative failed — using template summary');
+      }
+    }
 
     await app.prisma.report.create({
-      data: { projectId: id, type, period, periodStart, summary, auto: true },
+      data: { projectId: id, type, period, periodStart, summary, highlights, nextSteps, auto: true },
     });
     created++;
   }
