@@ -113,6 +113,96 @@ const aiRoutes: FastifyPluginAsync = async (app) => {
     };
   });
 
+  // POST /projects/:id/design/ai-images/edit — refine an existing image with an instruction
+  const editImageSchema = z.object({
+    image: z.string().startsWith('data:image/'),
+    instruction: z.string().min(3).max(4000),
+    size: z.enum(['1024x1024', '1536x1024', '1024x1536']).default('1024x1024'),
+  });
+
+  app.post<{ Params: { id: string } }>(
+    '/:id/design/ai-images/edit',
+    { preHandler: [app.authenticate], bodyLimit: 25 * 1024 * 1024 },
+    async (request, reply) => {
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) {
+        return reply.code(503).send({ error: 'AI image generation is not configured (missing OPENAI_API_KEY).' });
+      }
+      const body = editImageSchema.parse(request.body);
+
+      const user = await app.prisma.user.findUnique({
+        where: { id: request.user.sub },
+        select: { name: true },
+      });
+
+      const logUsage = (success: boolean) =>
+        app.prisma.apiUsageEvent.create({
+          data: {
+            provider: 'OPENAI_GPT_IMAGE_1',
+            operation: 'image.edit',
+            projectId: request.params.id,
+            userName: user?.name,
+            prompt: body.instruction.slice(0, 500),
+            costUsd: success ? IMAGE_COST[body.size] : 0,
+            success,
+          },
+        });
+
+      const srcBytes = Buffer.from(body.image.split(',')[1] ?? '', 'base64');
+      if (srcBytes.length === 0) {
+        return reply.code(422).send({ error: 'Invalid source image.' });
+      }
+
+      const form = new FormData();
+      form.append('model', 'gpt-image-1');
+      form.append('prompt', body.instruction);
+      form.append('size', body.size);
+      form.append('quality', 'medium');
+      form.append('image', new Blob([new Uint8Array(srcBytes)], { type: 'image/png' }), 'image.png');
+
+      let res: Response;
+      try {
+        res = await fetch('https://api.openai.com/v1/images/edits', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${apiKey}` },
+          body: form,
+        });
+      } catch (err) {
+        await logUsage(false);
+        app.log.error({ err }, 'Image edit request failed');
+        return reply.code(502).send({ error: 'Could not reach the image generation service.' });
+      }
+
+      if (!res.ok) {
+        await logUsage(false);
+        const detail = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+        app.log.error({ status: res.status, detail }, 'Image edit API returned an error');
+        return reply
+          .code(res.status === 401 ? 503 : 422)
+          .send({ error: detail?.error?.message ?? 'Image edit failed.' });
+      }
+
+      const json = (await res.json()) as { data: { b64_json?: string; url?: string }[] };
+      let b64 = json.data[0]?.b64_json;
+      if (!b64 && json.data[0]?.url) {
+        const imgRes = await fetch(json.data[0].url);
+        if (imgRes.ok) b64 = Buffer.from(await imgRes.arrayBuffer()).toString('base64');
+      }
+      if (!b64) {
+        await logUsage(false);
+        return reply.code(502).send({ error: 'Image edit returned no image.' });
+      }
+      await logUsage(true);
+
+      return {
+        image: `data:image/png;base64,${b64}`,
+        revisedPrompt: null,
+        costUsd: IMAGE_COST[body.size],
+        asset: null,
+      };
+    },
+  );
+
   // GET /projects/:id/design/ai-usage — usage tracker (project + workspace totals)
   app.get<{ Params: { id: string } }>('/:id/design/ai-usage', auth, async (request) => {
     const monthStart = new Date();
