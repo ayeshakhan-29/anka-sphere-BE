@@ -179,6 +179,7 @@ model Project {
   deploymentQueueItems DeploymentQueueItem[]
   wpPlugins           WPPlugin[]
   wpThemes            WPTheme[]
+  reports             Report[]
 
 
   @@map("projects")
@@ -632,4 +633,57 @@ model Maintenance {
   updatedAt         DateTime @updatedAt
 
   @@map("maintenance")
+}
+
+// ─── Reports (cross-department) ──────────────────────────────────────────────
+
+enum ReportType {
+  WEEKLY
+  MONTHLY
+}
+
+enum ReportStatus {
+  DRAFT
+  READY
+  SENT
+}
+
+model Report {
+  id          String       @id @default(cuid())
+  projectId   String
+  type        ReportType
+  period      String
+  periodStart DateTime
+  status      ReportStatus @default(DRAFT)
+  summary     String?
+  blockers    String?
+  highlights  String?
+  nextSteps   String?
+  auto        Boolean      @default(false)
+  sentTo      String?
+  sentAt      DateTime?
+  sentByName  String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, type, periodStart])
+  @@map("reports")
+}
+
+// ─── AI API usage tracking ───────────────────────────────────────────────────
+
+model ApiUsageEvent {
+  id        String   @id @default(cuid())
+  provider  String
+  operation String
+  projectId String?
+  userName  String?
+  prompt    String?
+  costUsd   Float    @default(0)
+  success   Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@map("api_usage_events")
 }
