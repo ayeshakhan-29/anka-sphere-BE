@@ -21,6 +21,8 @@ import { errorHandler } from './middleware/error-handler.js';
 
 export async function buildApp() {
   const app = Fastify({
+    // AI-generated images are saved as ~2 MB base64 data URIs; default 1 MB would 413 them
+    bodyLimit: 25 * 1024 * 1024,
     logger: {
       level: process.env.LOG_LEVEL ?? 'info',
       transport:
