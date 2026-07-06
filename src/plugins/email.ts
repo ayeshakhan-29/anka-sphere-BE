@@ -9,6 +9,9 @@ export interface SendEmailOptions {
   bodyHtml: string;
   ctaLabel?: string;
   ctaUrl?: string;
+  from?: string;
+  replyTo?: string;
+  brandName?: string;
 }
 
 export interface Mailer {
@@ -22,8 +25,10 @@ declare module 'fastify' {
 }
 
 const FROM = () => process.env.EMAIL_FROM ?? 'Anka Sphere <no-reply@anka.agency>';
+const escapeHtml = (value: string) => value.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch] ?? ch));
 
 function layout(opts: SendEmailOptions): string {
+  const brand = escapeHtml(opts.brandName ?? 'Anka Sphere');
   const cta =
     opts.ctaLabel && opts.ctaUrl
       ? `<tr><td style="padding:24px 32px 0">
@@ -36,7 +41,7 @@ function layout(opts: SendEmailOptions): string {
     <tr><td align="center">
       <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background:#FFFFFF;border-radius:12px;border:1px solid #E2E8F0;text-align:left">
         <tr><td style="padding:28px 32px 0">
-          <span style="display:inline-block;background:#0F172A;color:#F8FAFC;font-size:12px;font-weight:700;letter-spacing:0.08em;padding:6px 12px;border-radius:6px">ANKA SPHERE</span>
+          <span style="display:inline-block;background:#0F172A;color:#F8FAFC;font-size:12px;font-weight:700;letter-spacing:0.08em;padding:6px 12px;border-radius:6px">${brand.toUpperCase()}</span>
         </td></tr>
         <tr><td style="padding:24px 32px 0">
           <h1 style="margin:0;font-size:19px;font-weight:600;color:#0F172A">${opts.heading}</h1>
@@ -90,7 +95,8 @@ const emailPlugin: FastifyPluginAsync = fp(async (app) => {
     async send(opts) {
       const t = await getTransporter();
       const info = await t.sendMail({
-        from: FROM(),
+        from: opts.from ?? FROM(),
+        replyTo: opts.replyTo,
         to: Array.isArray(opts.to) ? opts.to.join(', ') : opts.to,
         subject: opts.subject,
         html: layout(opts),

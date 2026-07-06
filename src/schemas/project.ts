@@ -6,6 +6,8 @@ export const createProjectSchema = z.object({
   description: z.string().optional(),
   startDate: z.string().datetime().optional(),
   targetDate: z.string().datetime().optional(),
+  analyticsPropertyId: z.string().optional(),
+  searchConsoleUrl: z.string().url().optional().or(z.literal('')),
 });
 
 export const updateProjectSchema = createProjectSchema.partial().extend({

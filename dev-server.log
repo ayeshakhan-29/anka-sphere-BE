@@ -1,0 +1,26 @@
+
+> anka-sphere-be@1.0.0 dev
+> prisma db push && tsx prisma/seed.ts && tsx watch src/server.ts
+
+Datasource "db": PostgreSQL database "anka-sphere", schema "public" at "localhost:5432"
+
+The database is already in sync with the Prisma schema.
+
+Seed complete.
+[00:57:51.875] [32mINFO[39m (12156): [36mReport scheduler started (weekly: Mon 08:00, monthly: 1st 08:00)[39m
+[00:57:51.948] [31mERROR[39m (12156): [36mlisten EADDRINUSE: address already in use 0.0.0.0:3010[39m
+    err: {
+      "type": "Error",
+      "message": "listen EADDRINUSE: address already in use 0.0.0.0:3010",
+      "stack":
+          Error: listen EADDRINUSE: address already in use 0.0.0.0:3010
+              at Server.setupListenHandle [as _listen2] (node:net:1948:16)
+              at listenInCluster (node:net:2005:12)
+              at node:net:2214:7
+              at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+      "code": "EADDRINUSE",
+      "errno": -4091,
+      "syscall": "listen",
+      "address": "0.0.0.0",
+      "port": 3010
+    }
