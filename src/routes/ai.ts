@@ -325,6 +325,121 @@ const aiRoutes: FastifyPluginAsync = async (app) => {
     }
   });
 
+  // POST /projects/:id/content/ai-page-draft — first-draft page copy + SEO meta
+  const pageDraftSchema = z.object({
+    title: z.string().min(2).max(200),
+    notes: z.string().max(1000).optional(),
+  });
+
+  app.post<{ Params: { id: string } }>('/:id/content/ai-page-draft', auth, async (request, reply) => {
+    const body = pageDraftSchema.parse(request.body);
+
+    const [project, user] = await Promise.all([
+      app.prisma.project.findUnique({
+        where: { id: request.params.id },
+        include: { profiling: true, content: true },
+      }),
+      app.prisma.user.findUnique({ where: { id: request.user.sub }, select: { name: true } }),
+    ]);
+    if (!project) return reply.code(404).send({ error: 'Project not found' });
+
+    const p = project.profiling;
+    const c = project.content;
+    const context = [
+      `Client: ${p?.companyName ?? project.clientName}`,
+      p?.industry && `Industry: ${p.industry}`,
+      p?.about && `About: ${p.about}`,
+      p?.brandVoice && `Brand voice: ${p.brandVoice}`,
+      p?.tagline && `Tagline: ${p.tagline}`,
+      p?.primaryKeywords && `Primary keywords: ${p.primaryKeywords}`,
+      c?.contentBrief && `Content brief: ${c.contentBrief}`,
+      c?.toneOfVoice && `Tone of voice: ${c.toneOfVoice}`,
+      c?.seoGuidelines && `SEO guidelines: ${c.seoGuidelines}`,
+    ].filter(Boolean).join('\n');
+
+    try {
+      const result = await chatJSON<{ body: string; seoTitle: string; seoDescription: string }>(app, {
+        operation: 'page.draft',
+        projectId: request.params.id,
+        userName: user?.name,
+        system:
+          `You are a senior website copywriter at a digital agency. Write a first draft the client's content team ` +
+          `will refine — clear structure, on-brand, no lorem ipsum, no invented facts (leave [PLACEHOLDER] markers ` +
+          `for specifics you cannot know like prices or dates). Respond with a single JSON object: ` +
+          `{"body": string, "seoTitle": string, "seoDescription": string}. ` +
+          `body: 300-500 words of page copy in plain text with section headings on their own lines. ` +
+          `seoTitle: max 60 characters including the brand name. seoDescription: 120-155 characters.`,
+        user: `Brand & content context:\n${context}\n\nPage to write: "${body.title}"${body.notes ? `\nExtra notes: ${body.notes}` : ''}`,
+      });
+      return {
+        body: String(result.body ?? ''),
+        seoTitle: String(result.seoTitle ?? ''),
+        seoDescription: String(result.seoDescription ?? ''),
+      };
+    } catch (err) {
+      if (err instanceof AiUnavailableError) return reply.code(503).send({ error: 'AI drafting is not configured (missing OPENAI_API_KEY).' });
+      if (err instanceof AiRequestError) return reply.code(err.status).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  // POST /projects/:id/paid/ai-ad-copy — ad copy variants for Google / Meta
+  const adCopySchema = z.object({
+    network: z.enum(['GOOGLE', 'META']),
+    goal: z.string().min(3).max(1000),
+  });
+
+  app.post<{ Params: { id: string } }>('/:id/paid/ai-ad-copy', auth, async (request, reply) => {
+    const body = adCopySchema.parse(request.body);
+
+    const [project, user] = await Promise.all([
+      app.prisma.project.findUnique({
+        where: { id: request.params.id },
+        include: { profiling: true, marketing: true },
+      }),
+      app.prisma.user.findUnique({ where: { id: request.user.sub }, select: { name: true } }),
+    ]);
+    if (!project) return reply.code(404).send({ error: 'Project not found' });
+
+    const p = project.profiling;
+    const context = [
+      `Client: ${p?.companyName ?? project.clientName}`,
+      p?.industry && `Industry: ${p.industry}`,
+      p?.about && `About: ${p.about}`,
+      p?.brandVoice && `Brand voice: ${p.brandVoice}`,
+      p?.tagline && `Tagline: ${p.tagline}`,
+      p?.brandDislikes && `Never do: ${p.brandDislikes}`,
+      project.marketing?.targetAudience && `Target audience: ${project.marketing.targetAudience}`,
+    ].filter(Boolean).join('\n');
+
+    const spec = body.network === 'GOOGLE'
+      ? `Google Ads responsive search ad. "headlines": exactly 6 strings, each max 30 characters. ` +
+        `"descriptions": exactly 4 strings, each max 90 characters.`
+      : `Meta (Facebook/Instagram) ad. "headlines": exactly 4 strings, each max 40 characters. ` +
+        `"descriptions": exactly 3 primary-text strings, each 80-125 characters, hook first.`;
+
+    try {
+      const result = await chatJSON<{ headlines: string[]; descriptions: string[] }>(app, {
+        operation: 'adcopy.generate',
+        projectId: request.params.id,
+        userName: user?.name,
+        system:
+          `You are a senior performance marketing copywriter. Write scroll-stopping, on-brand ad copy — ` +
+          `specific benefits over vague claims, no clickbait, no ALL CAPS. Respond with a single JSON object: ` +
+          `{"headlines": string[], "descriptions": string[]}. ${spec}`,
+        user: `Brand context:\n${context}\n\nCampaign goal:\n${body.goal}`,
+      });
+      return {
+        headlines: Array.isArray(result.headlines) ? result.headlines.map(String) : [],
+        descriptions: Array.isArray(result.descriptions) ? result.descriptions.map(String) : [],
+      };
+    } catch (err) {
+      if (err instanceof AiUnavailableError) return reply.code(503).send({ error: 'AI ad copy is not configured (missing OPENAI_API_KEY).' });
+      if (err instanceof AiRequestError) return reply.code(err.status).send({ error: err.message });
+      throw err;
+    }
+  });
+
   // GET /projects/:id/design/ai-usage — usage tracker (project + workspace totals)
   app.get<{ Params: { id: string } }>('/:id/design/ai-usage', auth, async (request) => {
     const monthStart = new Date();
