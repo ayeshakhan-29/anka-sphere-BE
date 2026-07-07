@@ -6,6 +6,7 @@ import {
   DevTaskBody,
 } from '../schemas/development.js';
 import { notifyGateHandoff } from '../services/handoff.js';
+import { seedMarketingTasks } from '../services/task-seeder.js';
 
 type MaintenanceRequestBody = {
   title?: string;
@@ -87,6 +88,7 @@ const developmentRoutes: FastifyPluginAsync = async (app) => {
     ]);
 
     notifyGateHandoff(app, request.params.id, 'DEVELOPMENT', 'MARKETING');
+    seedMarketingTasks(app, request.params.id);
     return { message: 'Development approved. Marketing stage unlocked.', warnings };
   });
 

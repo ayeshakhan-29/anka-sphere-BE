@@ -8,6 +8,7 @@ import {
   DesignAssetBody,
 } from '../schemas/design.js';
 import { notifyGateHandoff } from '../services/handoff.js';
+import { seedDevTasks } from '../services/task-seeder.js';
 
 const designRoutes: FastifyPluginAsync = async (app) => {
   const auth = { preHandler: [app.authenticate] };
@@ -85,6 +86,7 @@ const designRoutes: FastifyPluginAsync = async (app) => {
     ]);
 
     notifyGateHandoff(app, request.params.id, 'DESIGN', 'DEVELOPMENT');
+    seedDevTasks(app, request.params.id);
     return { message: 'Design approved. Development stage is now unlocked.', warnings };
   });
 

@@ -8,6 +8,7 @@ import {
   UpdatePageStatusBody,
 } from '../schemas/written-content.js';
 import { notifyGateHandoff } from '../services/handoff.js';
+import { seedDesignTasks } from '../services/task-seeder.js';
 
 const writtenContentRoutes: FastifyPluginAsync = async (app) => {
   const auth = { preHandler: [app.authenticate] };
@@ -75,6 +76,7 @@ const writtenContentRoutes: FastifyPluginAsync = async (app) => {
     ]);
 
     notifyGateHandoff(app, request.params.id, 'WRITTEN_CONTENT', 'DESIGN');
+    seedDesignTasks(app, request.params.id);
     return { message: 'Written Content approved. Design stage is now unlocked.' };
   });
 
