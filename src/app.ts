@@ -14,6 +14,7 @@ import wpPluginsThemesRoutes from './routes/wp-plugins-themes.js';
 import marketingRoutes from './routes/marketing.js';
 import maintenanceRoutes from './routes/maintenance.js';
 import reportRoutes from './routes/reports.js';
+import emailDeliveryRoutes from './routes/email-delivery.js';
 import aiRoutes from './routes/ai.js';
 import { startReportScheduler } from './services/report-scheduler.js';
 
@@ -75,6 +76,7 @@ export async function buildApp() {
   await app.register(marketingRoutes,   { prefix: '/projects' });
   await app.register(maintenanceRoutes, { prefix: '/maintenance' });
   await app.register(reportRoutes,      { prefix: '/projects' });
+  await app.register(emailDeliveryRoutes, { prefix: '/projects' });
   await app.register(aiRoutes,          { prefix: '/projects' });
 
   startReportScheduler(app);

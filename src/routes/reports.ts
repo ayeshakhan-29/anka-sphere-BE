@@ -6,6 +6,11 @@ import {
   SendReportBody,
 } from '../schemas/report.js';
 
+function senderAddress(name: string, email: string): string {
+  const safeName = name.replace(/[\r\n"]/g, ' ').trim();
+  return `"${safeName}" <${email}>`;
+}
+
 const reportRoutes: FastifyPluginAsync = async (app) => {
   const auth = { preHandler: [app.authenticate] };
 
@@ -59,7 +64,15 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
       const { to } = sendReportSchema.parse(request.body);
       const report = await app.prisma.report.findUnique({
         where: { id: request.params.reportId },
-        include: { project: { select: { name: true, clientName: true } } },
+        include: {
+          project: {
+            select: {
+              name: true,
+              clientName: true,
+              emailSettings: { select: { fromName: true, fromEmail: true, replyToEmail: true, status: true } },
+            },
+          },
+        },
       });
       if (!report || report.projectId !== request.params.id) {
         return reply.code(404).send({ error: 'Report not found' });
@@ -71,11 +84,15 @@ const reportRoutes: FastifyPluginAsync = async (app) => {
       });
 
       const typeLabel = report.type === 'WEEKLY' ? 'Weekly' : 'Monthly';
+      const emailSettings = report.project.emailSettings?.status === 'ACTIVE' ? report.project.emailSettings : null;
       const section = (label: string, value: string | null) =>
         value ? `<p style="margin:14px 0 4px"><strong>${label}</strong></p><p style="margin:0">${value.replace(/\n/g, '<br>')}</p>` : '';
 
       const result = await app.mailer.send({
         to,
+        from: emailSettings ? senderAddress(emailSettings.fromName, emailSettings.fromEmail) : undefined,
+        replyTo: emailSettings?.replyToEmail ?? undefined,
+        brandName: emailSettings?.fromName ?? report.project.name,
         subject: `${typeLabel} report — ${report.project.name} (${report.period})`,
         heading: `${typeLabel} report · ${report.project.name}`,
         bodyHtml:
