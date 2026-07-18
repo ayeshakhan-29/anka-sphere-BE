@@ -163,6 +163,19 @@ async function main() {
 
   const verdant = await prisma.project.findFirst({ where: { clientName: 'Verdant Foods' } });
   if (verdant) {
+    // Ensure analytics settings are seeded
+    if (!verdant.analyticsPropertyId || !verdant.searchConsoleUrl) {
+      await prisma.project.update({
+        where: { id: verdant.id },
+        data: {
+          analyticsPropertyId: verdant.analyticsPropertyId ?? '123456789',
+          searchConsoleUrl: verdant.searchConsoleUrl ?? 'verdantfoods.com',
+        },
+      });
+      verdant.analyticsPropertyId = verdant.analyticsPropertyId ?? '123456789';
+      verdant.searchConsoleUrl = verdant.searchConsoleUrl ?? 'verdantfoods.com';
+    }
+
     // Stage 1 — Profiling
     if (!(await prisma.projectProfiling.findUnique({ where: { projectId: verdant.id } }))) {
       await prisma.projectProfiling.create({

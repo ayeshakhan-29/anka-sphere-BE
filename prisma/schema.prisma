@@ -183,6 +183,9 @@ model Project {
   wpThemes            WPTheme[]
   reports             Report[]
   emailSettings       ProjectEmailSettings?
+  socialPosts         SocialPost[]
+  adAccountLinks      AdAccountLink[]
+  metricSnapshots     MetricSnapshot[]
 
 
   @@map("projects")
@@ -377,6 +380,7 @@ model DesignAsset {
   updatedAt   DateTime  @updatedAt
 
   design Design @relation(fields: [designId], references: [id], onDelete: Cascade)
+  socialPosts SocialPost[]
 
   @@map("design_assets")
 }
@@ -708,6 +712,132 @@ model ProjectEmailSettings {
 
   @@map("project_email_settings")
 }
+// ─── External Integrations ───────────────────────────────────────────────────
+
+enum IntegrationProvider {
+  GOOGLE_ANALYTICS
+  GOOGLE_SEARCH_CONSOLE
+  GOOGLE_ADS
+  META
+  TIKTOK
+  STABILITY
+  RUNWAY
+}
+
+enum IntegrationStatus {
+  NOT_CONFIGURED
+  PENDING
+  CONNECTED
+  ERROR
+}
+
+enum SocialPlatform {
+  INSTAGRAM
+  TIKTOK
+  FACEBOOK
+  LINKEDIN
+  X
+}
+
+enum SocialPostStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHING
+  PUBLISHED
+  FAILED
+}
+
+enum AdNetwork {
+  GOOGLE
+  META
+}
+
+enum MetricSource {
+  GA4
+  GSC
+  GOOGLE_ADS
+  META_ADS
+}
+
+/// Workspace-level connection to an external provider. OAuth tokens are
+/// encrypted at rest via utils/encryption.ts (same scheme as WP passwords).
+model IntegrationConnection {
+  id              String              @id @default(cuid())
+  provider        IntegrationProvider @unique
+  status          IntegrationStatus   @default(NOT_CONFIGURED)
+  accessTokenEnc  String?
+  refreshTokenEnc String?
+  tokenExpiresAt  DateTime?
+  accountId       String?
+  accountName     String?
+  scopes          String?
+  metadata        Json?
+  lastSyncedAt    DateTime?
+  errorMessage    String?
+  connectedAt     DateTime?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@map("integration_connections")
+}
+
+model SocialPost {
+  id            String           @id @default(cuid())
+  projectId     String
+  platform      SocialPlatform
+  caption       String
+  hashtags      String?
+  mediaAssetId  String?
+  scheduledAt   DateTime?
+  status        SocialPostStatus @default(DRAFT)
+  externalPostId String?
+  externalUrl   String?
+  errorMessage  String?
+  publishedAt   DateTime?
+  createdByName String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  project    Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  mediaAsset DesignAsset? @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
+
+  @@index([projectId, status])
+  @@index([status, scheduledAt])
+  @@map("social_posts")
+}
+
+/// Links a project to an external ad account (and optionally specific campaigns).
+model AdAccountLink {
+  id                  String    @id @default(cuid())
+  projectId           String
+  network             AdNetwork
+  externalAccountId   String
+  externalAccountName String?
+  externalCampaignIds Json?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, network])
+  @@map("ad_account_links")
+}
+
+/// Cached external metrics so dashboards don't hit provider rate limits.
+model MetricSnapshot {
+  id        String       @id @default(cuid())
+  projectId String
+  source    MetricSource
+  period    String
+  data      Json
+  fetchedAt DateTime     @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, source, period])
+  @@map("metric_snapshots")
+}
+
 model ApiUsageEvent {
   id        String   @id @default(cuid())
   provider  String

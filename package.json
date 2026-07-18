@@ -30,6 +30,7 @@
   },
   "homepage": "https://github.com/ayeshakhan-29/anka-sphere-BE#readme",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1088.0",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.2.0",
     "@fastify/jwt": "^10.1.0",

@@ -1,10 +1,21 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { chatJSON, AiUnavailableError, AiRequestError } from '../services/openai.js';
+import {
+  generateStabilityImage,
+  STABILITY_IMAGE_COST,
+} from '../services/integrations/stability.js';
+import { uploadToS3 } from '../services/s3.js';
+import {
+  createRunwayVideoTask,
+  getRunwayVideoTask,
+  downloadRunwayVideo,
+} from '../services/integrations/runway.js';
 
 const generateImageSchema = z.object({
   prompt: z.string().min(3).max(4000),
   size: z.enum(['1024x1024', '1536x1024', '1024x1536']).default('1024x1024'),
+  model: z.enum(['openai', 'stability']).default('openai'),
   saveToAssets: z.boolean().default(false),
   assetName: z.string().optional(),
 });
@@ -19,12 +30,8 @@ const IMAGE_COST: Record<string, number> = {
 const aiRoutes: FastifyPluginAsync = async (app) => {
   const auth = { preHandler: [app.authenticate] };
 
-  // POST /projects/:id/design/ai-images  — generate an image with DALL-E 3
+  // POST /projects/:id/design/ai-images  — generate an image (OpenAI gpt-image-1 or Stability Core)
   app.post<{ Params: { id: string } }>('/:id/design/ai-images', auth, async (request, reply) => {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return reply.code(503).send({ error: 'AI image generation is not configured (missing OPENAI_API_KEY).' });
-    }
     const body = generateImageSchema.parse(request.body);
 
     const user = await app.prisma.user.findUnique({
@@ -32,61 +39,89 @@ const aiRoutes: FastifyPluginAsync = async (app) => {
       select: { name: true },
     });
 
-    const logUsage = (success: boolean) =>
-      app.prisma.apiUsageEvent.create({
-        data: {
-          provider: 'OPENAI_GPT_IMAGE_1',
-          operation: 'image.generate',
-          projectId: request.params.id,
-          userName: user?.name,
-          prompt: body.prompt.slice(0, 500),
-          costUsd: success ? IMAGE_COST[body.size] : 0,
-          success,
-        },
+    let dataUri: string;
+    let revisedPrompt: string | null = null;
+    let costUsd: number;
+
+    if (body.model === 'stability') {
+      // Errors carry a statusCode and are translated by the global error handler
+      const b64 = await generateStabilityImage(app, {
+        prompt: body.prompt,
+        size: body.size,
+        operation: 'image.generate',
+        projectId: request.params.id,
+        userName: user?.name,
       });
+      dataUri = `data:image/png;base64,${b64}`;
+      costUsd = STABILITY_IMAGE_COST;
+    } else {
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) {
+        return reply.code(503).send({ error: 'AI image generation is not configured (missing OPENAI_API_KEY).' });
+      }
 
-    let res: Response;
-    try {
-      res = await fetch('https://api.openai.com/v1/images/generations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: 'gpt-image-1',
-          prompt: body.prompt,
-          n: 1,
-          size: body.size,
-          quality: 'medium',
-        }),
-      });
-    } catch (err) {
-      await logUsage(false);
-      app.log.error({ err }, 'Image generation request failed');
-      return reply.code(502).send({ error: 'Could not reach the image generation service.' });
+      const logUsage = (success: boolean) =>
+        app.prisma.apiUsageEvent.create({
+          data: {
+            provider: 'OPENAI_GPT_IMAGE_1',
+            operation: 'image.generate',
+            projectId: request.params.id,
+            userName: user?.name,
+            prompt: body.prompt.slice(0, 500),
+            costUsd: success ? IMAGE_COST[body.size] : 0,
+            success,
+          },
+        });
+
+      let res: Response;
+      try {
+        res = await fetch('https://api.openai.com/v1/images/generations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify({
+            model: 'gpt-image-1',
+            prompt: body.prompt,
+            n: 1,
+            size: body.size,
+            quality: 'medium',
+          }),
+        });
+      } catch (err) {
+        await logUsage(false);
+        app.log.error({ err }, 'Image generation request failed');
+        return reply.code(502).send({ error: 'Could not reach the image generation service.' });
+      }
+
+      if (!res.ok) {
+        await logUsage(false);
+        const detail = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+        app.log.error({ status: res.status, detail }, 'Image API returned an error');
+        return reply
+          .code(res.status === 401 ? 503 : 422)
+          .send({ error: detail?.error?.message ?? 'Image generation failed.' });
+      }
+
+      const json = (await res.json()) as { data: { b64_json?: string; url?: string; revised_prompt?: string }[] };
+      let b64 = json.data[0]?.b64_json;
+      if (!b64 && json.data[0]?.url) {
+        // API returned a short-lived URL — download and inline it so the asset never expires
+        const imgRes = await fetch(json.data[0].url);
+        if (imgRes.ok) b64 = Buffer.from(await imgRes.arrayBuffer()).toString('base64');
+      }
+      if (!b64) {
+        await logUsage(false);
+        return reply.code(502).send({ error: 'Image generation returned no image.' });
+      }
+      await logUsage(true);
+
+      dataUri = `data:image/png;base64,${b64}`;
+      revisedPrompt = json.data[0]?.revised_prompt ?? null;
+      costUsd = IMAGE_COST[body.size];
     }
 
-    if (!res.ok) {
-      await logUsage(false);
-      const detail = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-      app.log.error({ status: res.status, detail }, 'Image API returned an error');
-      return reply
-        .code(res.status === 401 ? 503 : 422)
-        .send({ error: detail?.error?.message ?? 'Image generation failed.' });
-    }
+    const modelLabel = body.model === 'stability' ? 'Stable Image Core' : 'gpt-image-1';
 
-    const json = (await res.json()) as { data: { b64_json?: string; url?: string; revised_prompt?: string }[] };
-    let b64 = json.data[0]?.b64_json;
-    if (!b64 && json.data[0]?.url) {
-      // API returned a short-lived URL — download and inline it so the asset never expires
-      const imgRes = await fetch(json.data[0].url);
-      if (imgRes.ok) b64 = Buffer.from(await imgRes.arrayBuffer()).toString('base64');
-    }
-    if (!b64) {
-      await logUsage(false);
-      return reply.code(502).send({ error: 'Image generation returned no image.' });
-    }
-    await logUsage(true);
-
-    const dataUri = `data:image/png;base64,${b64}`;
+    const finalImageUrl = await uploadToS3(dataUri, 'ai-image');
 
     let asset = null;
     if (body.saveToAssets) {
@@ -100,16 +135,16 @@ const aiRoutes: FastifyPluginAsync = async (app) => {
           designId: design.id,
           name: body.assetName ?? `AI · ${body.prompt.slice(0, 60)}`,
           type: 'IMAGE',
-          url: dataUri,
-          notes: `AI-generated (gpt-image-1). Prompt: ${body.prompt.slice(0, 300)}`,
+          url: finalImageUrl,
+          notes: `AI-generated (${modelLabel}). Prompt: ${body.prompt.slice(0, 300)}`,
         },
       });
     }
 
     return {
-      image: dataUri,
-      revisedPrompt: json.data[0]?.revised_prompt ?? null,
-      costUsd: IMAGE_COST[body.size],
+      image: finalImageUrl,
+      revisedPrompt,
+      costUsd,
       asset,
     };
   });
@@ -195,12 +230,105 @@ const aiRoutes: FastifyPluginAsync = async (app) => {
       }
       await logUsage(true);
 
+      const finalImageUrl = await uploadToS3(`data:image/png;base64,${b64}`, 'ai-image-edit');
+
       return {
-        image: `data:image/png;base64,${b64}`,
+        image: finalImageUrl,
         revisedPrompt: null,
         costUsd: IMAGE_COST[body.size],
         asset: null,
       };
+    },
+  );
+
+  // ── AI video generation (Runway gen4_turbo — async task API) ───────────────
+
+  const generateVideoSchema = z.object({
+    prompt: z.string().min(3).max(1000),
+    duration: z.union([z.literal(5), z.literal(10)]).default(5),
+    ratio: z.enum(['1280:720', '720:1280', '960:960']).default('1280:720'),
+    // Optional source image (data URI) switches text→video to image→video
+    image: z.string().startsWith('data:image/').optional(),
+  });
+
+  // POST /projects/:id/design/ai-videos — start an async generation task
+  app.post<{ Params: { id: string } }>(
+    '/:id/design/ai-videos',
+    { preHandler: [app.authenticate], bodyLimit: 25 * 1024 * 1024 },
+    async (request) => {
+      const body = generateVideoSchema.parse(request.body);
+
+      const user = await app.prisma.user.findUnique({
+        where: { id: request.user.sub },
+        select: { name: true },
+      });
+
+      // Errors carry a statusCode and are translated by the global error handler
+      const { taskId, costUsd } = await createRunwayVideoTask(app, {
+        prompt: body.prompt,
+        duration: body.duration,
+        ratio: body.ratio,
+        image: body.image,
+        projectId: request.params.id,
+        userName: user?.name,
+      });
+
+      return { taskId, costUsd };
+    },
+  );
+
+  // GET /projects/:id/design/ai-videos/:taskId — poll task progress
+  app.get<{ Params: { id: string; taskId: string } }>(
+    '/:id/design/ai-videos/:taskId',
+    auth,
+    async (request) => getRunwayVideoTask(app, request.params.taskId),
+  );
+
+  // POST /projects/:id/design/ai-videos/:taskId/save — persist the finished video
+  // as a DesignAsset. The server re-checks the task and downloads the output
+  // itself (Runway URLs expire in ~24 h and clients must not supply arbitrary
+  // URLs to inline).
+  const saveVideoSchema = z.object({ assetName: z.string().max(200).optional() });
+
+  app.post<{ Params: { id: string; taskId: string } }>(
+    '/:id/design/ai-videos/:taskId/save',
+    auth,
+    async (request, reply) => {
+      const body = saveVideoSchema.parse(request.body ?? {});
+
+      const task = await getRunwayVideoTask(app, request.params.taskId);
+      if (task.status !== 'SUCCEEDED' || !task.videoUrl) {
+        return reply.code(409).send({ error: 'The video is not ready yet.' });
+      }
+
+      const b64 = await downloadRunwayVideo(task.videoUrl);
+      const dataUri = `data:video/mp4;base64,${b64}`;
+
+      const finalVideoUrl = await uploadToS3(dataUri, 'ai-video');
+
+      // The create call logged the prompt with the task id — recover it for the notes
+      const usage = await app.prisma.apiUsageEvent.findFirst({
+        where: { operation: `video.generate:${request.params.taskId}` },
+        select: { prompt: true },
+      });
+      const prompt = usage?.prompt ?? '';
+
+      const design = await app.prisma.design.upsert({
+        where: { projectId: request.params.id },
+        update: {},
+        create: { projectId: request.params.id },
+      });
+      const asset = await app.prisma.designAsset.create({
+        data: {
+          designId: design.id,
+          name: body.assetName ?? `AI Video · ${prompt.slice(0, 60) || request.params.taskId}`,
+          type: 'VIDEO',
+          url: finalVideoUrl,
+          notes: prompt ? `AI-generated (Runway gen4_turbo). Prompt: ${prompt.slice(0, 300)}` : 'AI-generated (Runway gen4_turbo).',
+        },
+      });
+
+      return { asset };
     },
   );
 

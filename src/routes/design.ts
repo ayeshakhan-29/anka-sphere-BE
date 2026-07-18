@@ -9,6 +9,7 @@ import {
 } from '../schemas/design.js';
 import { notifyGateHandoff } from '../services/handoff.js';
 import { seedDevTasks } from '../services/task-seeder.js';
+import { uploadToS3 } from '../services/s3.js';
 
 const designRoutes: FastifyPluginAsync = async (app) => {
   const auth = { preHandler: [app.authenticate] };
@@ -150,8 +151,23 @@ const designRoutes: FastifyPluginAsync = async (app) => {
         update: {},
         create: { projectId: request.params.id },
       });
+
+      let url = body.url;
+      let thumbnailUrl = body.thumbnailUrl;
+      if (url.startsWith('data:')) {
+        url = await uploadToS3(url, 'design-asset');
+      }
+      if (thumbnailUrl && thumbnailUrl.startsWith('data:')) {
+        thumbnailUrl = await uploadToS3(thumbnailUrl, 'design-thumbnail');
+      }
+
       const asset = await app.prisma.designAsset.create({
-        data: { ...body, designId: design.id },
+        data: {
+          ...body,
+          url,
+          thumbnailUrl,
+          designId: design.id,
+        },
       });
       return reply.code(201).send(asset);
     },

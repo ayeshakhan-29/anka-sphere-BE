@@ -1,3 +1,4 @@
+import { promises as dns } from 'dns';
 import { FastifyPluginAsync } from 'fastify';
 import {
   markEmailDeliveryConfiguredSchema,
@@ -90,6 +91,64 @@ function response(settings: {
   };
 }
 
+interface DnsCheckResult extends DnsRecord {
+  verified: boolean;
+  actual: string | null; // what the resolver returned, for troubleshooting
+}
+
+/**
+ * Some generated records carry instructions instead of literal values (e.g.
+ * provider-specific DKIM keys the user copies from their dashboard) — those
+ * can only be checked for existence, not exact match.
+ */
+function isPlaceholderValue(value: string): boolean {
+  return value.startsWith('Copy the') || value.includes('u000000') || value.includes('your-mail-provider');
+}
+
+async function checkDnsRecord(record: DnsRecord, domain: string): Promise<DnsCheckResult> {
+  const fqdn = record.host === '@' ? domain : `${record.host}.${domain}`;
+  const normalize = (v: string) => v.trim().toLowerCase().replace(/\.$/, '');
+
+  try {
+    if (record.type === 'TXT') {
+      const txts = (await dns.resolveTxt(fqdn)).map((chunks) => chunks.join(''));
+      const actual = txts.join(' | ') || null;
+
+      let verified: boolean;
+      if (isPlaceholderValue(record.value)) {
+        verified = txts.length > 0;
+      } else if (record.purpose === 'SPF') {
+        // The user may have merged our include into an existing SPF record
+        const include = record.value.match(/include:(\S+)/)?.[1];
+        verified = txts.some((t) => t.startsWith('v=spf1') && (!include || t.includes(include)));
+      } else if (record.purpose === 'DMARC') {
+        verified = txts.some((t) => t.startsWith('v=DMARC1'));
+      } else {
+        verified = txts.some((t) => normalize(t) === normalize(record.value));
+      }
+      return { ...record, verified, actual };
+    }
+
+    if (record.type === 'CNAME') {
+      const targets = await dns.resolveCname(fqdn);
+      const actual = targets.join(' | ') || null;
+      const verified = isPlaceholderValue(record.value)
+        ? targets.length > 0
+        : targets.some((t) => normalize(t) === normalize(record.value));
+      return { ...record, verified, actual };
+    }
+
+    // MX
+    const mx = await dns.resolveMx(fqdn);
+    const actual = mx.map((m) => `${m.priority} ${m.exchange}`).join(' | ') || null;
+    const verified = mx.some((m) => normalize(m.exchange) === normalize(record.value));
+    return { ...record, verified, actual };
+  } catch {
+    // ENOTFOUND / ENODATA / SERVFAIL — the record simply isn't visible yet
+    return { ...record, verified: false, actual: null };
+  }
+}
+
 const emailDeliveryRoutes: FastifyPluginAsync = async (app) => {
   const auth = { preHandler: [app.authenticate] };
 
@@ -134,6 +193,24 @@ const emailDeliveryRoutes: FastifyPluginAsync = async (app) => {
       return response(settings);
     },
   );
+
+  app.post<{ Params: { id: string } }>('/:id/email-delivery/verify-dns', auth, async (request, reply) => {
+    const existing = await app.prisma.projectEmailSettings.findUnique({ where: { projectId: request.params.id } });
+    if (!existing) return reply.code(404).send({ error: 'Email delivery settings not found' });
+
+    const records = recordsFor(existing.provider, existing.domain);
+    const results = await Promise.all(records.map((record) => checkDnsRecord(record, existing.domain)));
+    const allRequiredVerified = results.filter((r) => r.required).every((r) => r.verified);
+
+    const settings = allRequiredVerified && existing.status !== 'ACTIVE'
+      ? await app.prisma.projectEmailSettings.update({
+          where: { projectId: request.params.id },
+          data: { status: 'ACTIVE', verifiedAt: new Date() },
+        })
+      : existing;
+
+    return { ...response(settings), dnsRecords: results, allRequiredVerified };
+  });
 
   app.post<{ Params: { id: string }; Body: MarkEmailDeliveryConfiguredBody }>(
     '/:id/email-delivery/mark-configured',

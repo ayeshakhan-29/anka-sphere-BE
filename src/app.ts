@@ -16,7 +16,12 @@ import maintenanceRoutes from './routes/maintenance.js';
 import reportRoutes from './routes/reports.js';
 import emailDeliveryRoutes from './routes/email-delivery.js';
 import aiRoutes from './routes/ai.js';
+import integrationRoutes from './routes/integrations.js';
+import analyticsRoutes from './routes/analytics.js';
+import paidRoutes from './routes/paid.js';
+import socialPostRoutes from './routes/social-posts.js';
 import { startReportScheduler } from './services/report-scheduler.js';
+import { startSocialPublisher } from './services/social-publisher.js';
 
 import { errorHandler } from './middleware/error-handler.js';
 
@@ -78,8 +83,13 @@ export async function buildApp() {
   await app.register(reportRoutes,      { prefix: '/projects' });
   await app.register(emailDeliveryRoutes, { prefix: '/projects' });
   await app.register(aiRoutes,          { prefix: '/projects' });
+  await app.register(integrationRoutes, { prefix: '/integrations' });
+  await app.register(analyticsRoutes,   { prefix: '/projects' });
+  await app.register(paidRoutes,        { prefix: '/projects' });
+  await app.register(socialPostRoutes,  { prefix: '/projects' });
 
   startReportScheduler(app);
+  startSocialPublisher(app);
 
   return app;
 }
