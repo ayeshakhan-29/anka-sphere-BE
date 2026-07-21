@@ -23,12 +23,16 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
       });
       if (!project) return reply.code(404).send({ error: 'Project not found' });
       if (!project.analyticsPropertyId) {
-        return reply.code(409).send({ error: 'No GA4 property configured for this project.' });
+        return reply.code(400).send({ error: 'MISSING_CONFIG', message: 'GA4 Property ID is not configured. Please add your numeric GA4 Property ID in the form above.' });
       }
 
-      return cachedMetrics(app, project.id, 'GA4', `${query.range}d`, query.refresh, () =>
-        fetchGa4Metrics(app, project.analyticsPropertyId!, query.range, project.id),
-      );
+      try {
+        return await cachedMetrics(app, project.id, 'GA4', `${query.range}d`, query.refresh, () =>
+          fetchGa4Metrics(app, project.analyticsPropertyId!, query.range, project.id),
+        );
+      } catch (err: any) {
+        return reply.code(400).send({ error: 'GA4_FETCH_ERROR', message: err.message || 'Failed to fetch GA4 metrics.' });
+      }
     },
   );
 
@@ -43,12 +47,16 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
       });
       if (!project) return reply.code(404).send({ error: 'Project not found' });
       if (!project.searchConsoleUrl) {
-        return reply.code(409).send({ error: 'No Search Console property configured for this project.' });
+        return reply.code(400).send({ error: 'MISSING_CONFIG', message: 'Search Console Property URL is not configured. Please add your site URL in the form above.' });
       }
 
-      return cachedMetrics(app, project.id, 'GSC', `${query.range}d`, query.refresh, () =>
-        fetchGscMetrics(app, project.searchConsoleUrl!, query.range, project.id),
-      );
+      try {
+        return await cachedMetrics(app, project.id, 'GSC', `${query.range}d`, query.refresh, () =>
+          fetchGscMetrics(app, project.searchConsoleUrl!, query.range, project.id),
+        );
+      } catch (err: any) {
+        return reply.code(400).send({ error: 'GSC_FETCH_ERROR', message: err.message || 'Failed to fetch Search Console metrics.' });
+      }
     },
   );
 };

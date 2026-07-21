@@ -78,15 +78,25 @@ const paidRoutes: FastifyPluginAsync = async (app) => {
       const link = await app.prisma.adAccountLink.findUnique({
         where: { projectId_network: { projectId: request.params.id, network } },
       });
-      if (!link) {
-        return reply.code(409).send({ error: `No ${network === 'GOOGLE' ? 'Google Ads' : 'Meta'} ad account linked to this project.` });
+      if (!link || !link.externalAccountId) {
+        return reply.code(400).send({
+          error: 'MISSING_CONFIG',
+          message: `${network === 'GOOGLE' ? 'Google Ads Customer Account ID' : 'Meta Ads Account ID'} is not configured. Please add it in the form above.`,
+        });
       }
 
-      return cachedMetrics(app, request.params.id, source, `${query.range}d`, query.refresh, () =>
-        network === 'GOOGLE'
-          ? fetchGoogleAdsCampaigns(app, link.externalAccountId, query.range, request.params.id)
-          : fetchMetaAdsCampaigns(app, link.externalAccountId, query.range),
-      );
+      try {
+        return await cachedMetrics(app, request.params.id, source, `${query.range}d`, query.refresh, () =>
+          network === 'GOOGLE'
+            ? fetchGoogleAdsCampaigns(app, link.externalAccountId, query.range, request.params.id)
+            : fetchMetaAdsCampaigns(app, link.externalAccountId, query.range),
+        );
+      } catch (err: any) {
+        return reply.code(400).send({
+          error: 'ADS_FETCH_ERROR',
+          message: err.message || `Failed to fetch ${network} campaigns.`,
+        });
+      }
     });
   };
 
