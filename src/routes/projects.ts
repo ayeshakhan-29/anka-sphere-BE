@@ -278,6 +278,92 @@ const projectRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(204).send();
     },
   );
+
+  // ── Per-Project Google Credentials ─────────────────────────────────────────
+
+  app.get<{ Params: { id: string } }>('/:id/google-credentials', auth, async (request, reply) => {
+    const project = await app.prisma.project.findUnique({
+      where: { id: request.params.id },
+      select: {
+        id: true,
+        analyticsPropertyId: true,
+        searchConsoleUrl: true,
+        googleCredentials: true,
+        adAccountLinks: { where: { network: 'GOOGLE' } },
+      },
+    });
+    if (!project) return reply.code(404).send({ error: 'Project not found' });
+
+    const creds = project.googleCredentials;
+    const { decrypt } = await import('../utils/encryption.js');
+
+    return {
+      analyticsPropertyId: project.analyticsPropertyId ?? '',
+      searchConsoleUrl: project.searchConsoleUrl ?? '',
+      googleAdsAccountId: project.adAccountLinks[0]?.externalAccountId ?? creds?.googleAdsAccountId ?? '',
+      hasClientId: Boolean(creds?.clientIdEnc || process.env.GOOGLE_CLIENT_ID),
+      hasClientSecret: Boolean(creds?.clientSecretEnc || process.env.GOOGLE_CLIENT_SECRET),
+      hasDeveloperToken: Boolean(creds?.developerTokenEnc || process.env.GOOGLE_ADS_DEVELOPER_TOKEN),
+      status: creds?.status ?? 'NOT_CONFIGURED',
+      connectedAt: creds?.connectedAt ?? null,
+      maskedClientId: creds?.clientIdEnc ? `${decrypt(creds.clientIdEnc).substring(0, 8)}...` : null,
+    };
+  });
+
+  app.post<{
+    Params: { id: string };
+    Body: {
+      clientId?: string;
+      clientSecret?: string;
+      developerToken?: string;
+      analyticsPropertyId?: string;
+      searchConsoleUrl?: string;
+      googleAdsAccountId?: string;
+    };
+  }>('/:id/google-credentials', auth, async (request, reply) => {
+    const project = await app.prisma.project.findUnique({ where: { id: request.params.id } });
+    if (!project) return reply.code(404).send({ error: 'Project not found' });
+
+    const { clientId, clientSecret, developerToken, analyticsPropertyId, searchConsoleUrl, googleAdsAccountId } = request.body;
+    const { encrypt } = await import('../utils/encryption.js');
+
+    // Update project-level properties
+    await app.prisma.project.update({
+      where: { id: request.params.id },
+      data: {
+        analyticsPropertyId: analyticsPropertyId !== undefined ? analyticsPropertyId : undefined,
+        searchConsoleUrl: searchConsoleUrl !== undefined ? searchConsoleUrl : undefined,
+      },
+    });
+
+    if (googleAdsAccountId) {
+      await app.prisma.adAccountLink.upsert({
+        where: { projectId_network: { projectId: request.params.id, network: 'GOOGLE' } },
+        update: { externalAccountId: googleAdsAccountId },
+        create: { projectId: request.params.id, network: 'GOOGLE', externalAccountId: googleAdsAccountId },
+      });
+    }
+
+    const credsData: Record<string, any> = {
+      status: 'CONNECTED',
+      connectedAt: new Date(),
+    };
+
+    if (clientId) credsData.clientIdEnc = encrypt(clientId);
+    if (clientSecret) credsData.clientSecretEnc = encrypt(clientSecret);
+    if (developerToken) credsData.developerTokenEnc = encrypt(developerToken);
+    if (googleAdsAccountId) credsData.googleAdsAccountId = googleAdsAccountId;
+    // Mark as mock access token if direct credentials provided for dev testing
+    credsData.accessTokenEnc = encrypt('mock-access-token');
+
+    const updatedCreds = await app.prisma.projectGoogleCredentials.upsert({
+      where: { projectId: request.params.id },
+      update: credsData,
+      create: { projectId: request.params.id, ...credsData },
+    });
+
+    return reply.send({ success: true, status: updatedCreds.status });
+  });
 };
 
 export default projectRoutes;

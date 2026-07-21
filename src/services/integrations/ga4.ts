@@ -61,8 +61,9 @@ export async function fetchGa4Metrics(
   app: FastifyInstance,
   rawPropertyId: string,
   rangeDays: number,
+  projectId?: string,
 ): Promise<Ga4Metrics> {
-  const token = await getGoogleAccessToken(app);
+  const token = await getGoogleAccessToken(app, projectId);
   if (token === 'mock-access-token') {
     const sessionsByDay = Array.from({ length: rangeDays }, (_, i) => {
       const date = new Date(Date.now() - (rangeDays - 1 - i) * 86_400_000).toISOString().slice(0, 10);

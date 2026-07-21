@@ -161,10 +161,46 @@ export async function handleGoogleCallback(app: FastifyInstance, code: string): 
 }
 
 /**
- * Return a valid Google access token, refreshing (and re-persisting) it when
- * within a minute of expiry. Used by the GA4/GSC/Ads services in later tasks.
+ * Return a valid Google access token for a specific project (or global fallback),
+ * refreshing (and re-persisting) it when within a minute of expiry.
  */
-export async function getGoogleAccessToken(app: FastifyInstance): Promise<string> {
+export async function getGoogleAccessToken(app: FastifyInstance, projectId?: string): Promise<string> {
+  if (projectId) {
+    const proj = await app.prisma.projectGoogleCredentials.findUnique({ where: { projectId } });
+    if (proj && proj.status === 'CONNECTED' && proj.accessTokenEnc) {
+      if (proj.tokenExpiresAt && proj.tokenExpiresAt.getTime() > Date.now() + 60_000) {
+        return decrypt(proj.accessTokenEnc);
+      }
+      if (proj.refreshTokenEnc) {
+        const clientId = proj.clientIdEnc ? decrypt(proj.clientIdEnc) : process.env.GOOGLE_CLIENT_ID;
+        const clientSecret = proj.clientSecretEnc ? decrypt(proj.clientSecretEnc) : process.env.GOOGLE_CLIENT_SECRET;
+        if (clientId && clientSecret) {
+          try {
+            const tokens = await postToken(new URLSearchParams({
+              refresh_token: decrypt(proj.refreshTokenEnc),
+              client_id: clientId,
+              client_secret: clientSecret,
+              grant_type: 'refresh_token',
+            }));
+            const accessTokenEnc = encrypt(tokens.access_token);
+            const tokenExpiresAt = new Date(Date.now() + tokens.expires_in * 1000);
+            await app.prisma.projectGoogleCredentials.update({
+              where: { projectId },
+              data: { accessTokenEnc, tokenExpiresAt, status: 'CONNECTED', errorMessage: null },
+            });
+            return tokens.access_token;
+          } catch (err) {
+            const message = err instanceof Error ? err.message : 'Project Google token refresh failed.';
+            await app.prisma.projectGoogleCredentials.update({
+              where: { projectId },
+              data: { status: 'ERROR', errorMessage: message },
+            });
+          }
+        }
+      }
+    }
+  }
+
   const conn = await app.prisma.integrationConnection.findUnique({ where: { provider: CANONICAL } });
   if (!conn || conn.status !== 'CONNECTED' || !conn.accessTokenEnc) {
     throw new IntegrationUnavailableError('Google is not connected.');

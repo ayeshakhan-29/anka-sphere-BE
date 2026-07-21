@@ -51,8 +51,9 @@ export async function fetchGoogleAdsCampaigns(
   app: FastifyInstance,
   customerId: string,
   rangeDays: number,
+  projectId?: string,
 ): Promise<AdAccountSummary> {
-  const accessToken = await getGoogleAccessToken(app);
+  const accessToken = await getGoogleAccessToken(app, projectId);
   if (accessToken === 'mock-access-token') {
     const campaigns: AdCampaign[] = [
       { id: '1', name: 'Summer Organic Produce Search', status: 'ENABLED', spend: 320.50, impressions: 12500, clicks: 850, conversions: 42, ctr: 850/12500, cpc: 320.50/850 },
@@ -77,7 +78,17 @@ export async function fetchGoogleAdsCampaigns(
     };
   }
 
-  const developerToken = requireDeveloperToken();
+  let developerToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
+  if (projectId) {
+    const proj = await app.prisma.projectGoogleCredentials.findUnique({ where: { projectId } });
+    if (proj?.developerTokenEnc) {
+      const { decrypt } = await import('../../utils/encryption.js');
+      developerToken = decrypt(proj.developerTokenEnc);
+    }
+  }
+  if (!developerToken) {
+    throw new IntegrationUnavailableError('Google Ads is not configured (missing GOOGLE_ADS_DEVELOPER_TOKEN).');
+  }
   const cid = customerId.replace(/-/g, '');
 
   // GAQL only predefines a few relative ranges — explicit dates cover any window

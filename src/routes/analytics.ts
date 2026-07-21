@@ -27,7 +27,7 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
       }
 
       return cachedMetrics(app, project.id, 'GA4', `${query.range}d`, query.refresh, () =>
-        fetchGa4Metrics(app, project.analyticsPropertyId!, query.range),
+        fetchGa4Metrics(app, project.analyticsPropertyId!, query.range, project.id),
       );
     },
   );
@@ -47,7 +47,7 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
       }
 
       return cachedMetrics(app, project.id, 'GSC', `${query.range}d`, query.refresh, () =>
-        fetchGscMetrics(app, project.searchConsoleUrl!, query.range),
+        fetchGscMetrics(app, project.searchConsoleUrl!, query.range, project.id),
       );
     },
   );

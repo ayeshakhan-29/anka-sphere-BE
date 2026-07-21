@@ -179,10 +179,14 @@ export async function publishToTiktok(
   title: string,
   videoUrl: string,
 ): Promise<{ externalPostId: string; externalUrl: string | null }> {
+  const token = await getTiktokAccessToken(app);
+  if (token === 'mock-access-token') {
+    const publishId = `mock-tt-publish-${Math.random().toString(36).substring(2, 10)}`;
+    return { externalPostId: publishId, externalUrl: `https://www.tiktok.com/` };
+  }
   if (!/^https?:\/\//.test(videoUrl)) {
     throw new IntegrationRequestError('TikTok publishing needs a public video URL (base64 data URIs are not supported).', 422);
   }
-  const token = await getTiktokAccessToken(app);
 
   let res: Response;
   try {

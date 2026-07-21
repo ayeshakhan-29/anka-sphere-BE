@@ -50,8 +50,9 @@ export async function fetchGscMetrics(
   app: FastifyInstance,
   siteUrl: string,
   rangeDays: number,
+  projectId?: string,
 ): Promise<GscMetrics> {
-  const token = await getGoogleAccessToken(app);
+  const token = await getGoogleAccessToken(app, projectId);
   if (token === 'mock-access-token') {
     const clicks = Math.floor(Math.random() * 500) + 150;
     const impressions = clicks * 15;

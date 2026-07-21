@@ -315,6 +315,11 @@ export async function publishToFacebook(
   message: string,
   imageUrl?: string | null,
 ): Promise<PublishResult> {
+  const token = await getMetaAccessToken(app);
+  if (token === 'mock-access-token') {
+    const postId = `mock-fb-post-${Math.random().toString(36).substring(2, 10)}`;
+    return { externalPostId: postId, externalUrl: `https://www.facebook.com/${postId}` };
+  }
   const page = await getFirstPage(app);
 
   if (imageUrl && /^https?:\/\//.test(imageUrl)) {
@@ -340,10 +345,14 @@ export async function publishToInstagram(
   caption: string,
   imageUrl: string,
 ): Promise<PublishResult> {
+  const token = await getMetaAccessToken(app);
+  if (token === 'mock-access-token') {
+    const postId = `mock-ig-post-${Math.random().toString(36).substring(2, 10)}`;
+    return { externalPostId: postId, externalUrl: `https://www.instagram.com/p/${postId}` };
+  }
   if (!/^https?:\/\//.test(imageUrl)) {
     throw new IntegrationRequestError('Instagram publishing needs a public image URL (base64 data URIs are not supported by the Graph API).', 422);
   }
-  const token = await getMetaAccessToken(app);
   const page = await getFirstPage(app);
   const igId = page.instagram_business_account?.id;
   if (!igId) throw new IntegrationUnavailableError('No Instagram business account is linked to the connected Facebook Page.');

@@ -183,6 +183,7 @@ model Project {
   wpThemes            WPTheme[]
   reports             Report[]
   emailSettings       ProjectEmailSettings?
+  googleCredentials   ProjectGoogleCredentials?
   socialPosts         SocialPost[]
   adAccountLinks      AdAccountLink[]
   metricSnapshots     MetricSnapshot[]
@@ -711,6 +712,27 @@ model ProjectEmailSettings {
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@map("project_email_settings")
+}
+
+model ProjectGoogleCredentials {
+  id                 String            @id @default(cuid())
+  projectId          String            @unique
+  clientIdEnc        String?
+  clientSecretEnc    String?
+  developerTokenEnc  String?
+  accessTokenEnc     String?
+  refreshTokenEnc    String?
+  tokenExpiresAt     DateTime?
+  googleAdsAccountId String?
+  status             IntegrationStatus @default(NOT_CONFIGURED)
+  connectedAt        DateTime?
+  errorMessage       String?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("project_google_credentials")
 }
 // ─── External Integrations ───────────────────────────────────────────────────
 
