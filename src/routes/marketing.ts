@@ -117,6 +117,130 @@ const marketingRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(204).send();
     },
   );
+
+  // ── Email Campaigns ────────────────────────────────────────────────────────
+
+  app.get<{ Params: { id: string } }>('/:id/email-campaigns', auth, async (request) => {
+    return app.prisma.emailCampaign.findMany({
+      where: { projectId: request.params.id },
+      orderBy: { createdAt: 'desc' },
+    });
+  });
+
+  app.post<{ Params: { id: string }; Body: Record<string, any> }>('/:id/email-campaigns', auth, async (request, reply) => {
+    const body = (request.body as any) || {};
+    const campaign = await app.prisma.emailCampaign.create({
+      data: {
+        projectId: request.params.id,
+        name: body.name || 'Untitled Campaign',
+        audienceSegment: body.audienceSegment || 'All Subscribers',
+        subjectLines: body.subjectLines || ['Subject Line V1', 'Subject Line V2'],
+        bodyCopy: body.bodyCopy || '',
+        cta: body.cta || 'Learn More',
+        sendDate: body.sendDate ? new Date(body.sendDate) : new Date(),
+        status: body.status || 'DRAFT',
+      },
+    });
+    return reply.code(201).send(campaign);
+  });
+
+  app.delete<{ Params: { id: string; campaignId: string } }>('/:id/email-campaigns/:campaignId', auth, async (request, reply) => {
+    await app.prisma.emailCampaign.delete({ where: { id: request.params.campaignId } });
+    return reply.code(204).send();
+  });
+
+  // ── Content Repurposing ───────────────────────────────────────────────────
+
+  app.get<{ Params: { id: string } }>('/:id/repurposing', auth, async (request) => {
+    return app.prisma.contentRepurpose.findMany({
+      where: { projectId: request.params.id },
+      include: { sourcePage: true },
+      orderBy: { createdAt: 'desc' },
+    });
+  });
+
+  app.post<{ Params: { id: string }; Body: Record<string, any> }>('/:id/repurposing', auth, async (request, reply) => {
+    const body = (request.body as any) || {};
+    const item = await app.prisma.contentRepurpose.create({
+      data: {
+        projectId: request.params.id,
+        sourcePageId: body.sourcePageId || null,
+        targetFormat: body.targetFormat || 'CAROUSEL',
+        title: body.title || 'Repurposed Content Item',
+        notes: body.notes || '',
+        status: body.status || 'PLANNED',
+      },
+    });
+    return reply.code(201).send(item);
+  });
+
+
+  app.delete<{ Params: { id: string; itemSetId: string } }>('/:id/repurposing/:itemSetId', auth, async (request, reply) => {
+    await app.prisma.contentRepurpose.delete({ where: { id: request.params.itemSetId } });
+    return reply.code(204).send();
+  });
+
+  // ── Master Content Calendar ───────────────────────────────────────────────
+
+  app.get<{ Params: { id: string } }>('/:id/master-calendar', auth, async (request) => {
+    const projectId = request.params.id;
+
+    const [writtenContent, socialPosts, emailCampaigns] = await Promise.all([
+      app.prisma.writtenContent.findUnique({
+        where: { projectId },
+        include: { pages: true },
+      }),
+      app.prisma.socialPost.findMany({
+        where: { projectId },
+      }),
+      app.prisma.emailCampaign.findMany({
+        where: { projectId },
+      }),
+    ]);
+
+    const events: any[] = [];
+
+    // Blog / Page items
+    if (writtenContent?.pages) {
+      writtenContent.pages.forEach((page) => {
+        events.push({
+          id: `page-${page.id}`,
+          title: page.title,
+          type: 'BLOG',
+          date: page.updatedAt,
+          status: page.status,
+          channel: 'Website',
+        });
+      });
+    }
+
+    // Social Posts
+    socialPosts.forEach((post) => {
+      events.push({
+        id: `social-${post.id}`,
+        title: post.caption.slice(0, 40) + '...',
+        type: 'SOCIAL',
+        date: post.scheduledAt || post.createdAt,
+        status: post.status,
+        channel: post.platform,
+      });
+    });
+
+    // Email Campaigns
+    emailCampaigns.forEach((email) => {
+      events.push({
+        id: `email-${email.id}`,
+        title: email.name,
+        type: 'EMAIL',
+        date: email.sendDate || email.createdAt,
+        status: email.status,
+        channel: 'Email Newsletter',
+      });
+    });
+
+    return events;
+  });
 };
 
 export default marketingRoutes;
+

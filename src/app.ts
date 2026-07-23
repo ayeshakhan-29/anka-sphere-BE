@@ -20,6 +20,7 @@ import integrationRoutes from './routes/integrations.js';
 import analyticsRoutes from './routes/analytics.js';
 import paidRoutes from './routes/paid.js';
 import socialPostRoutes from './routes/social-posts.js';
+import seoRoutes from './routes/seo.js';
 import { startReportScheduler } from './services/report-scheduler.js';
 import { startSocialPublisher } from './services/social-publisher.js';
 
@@ -87,6 +88,8 @@ export async function buildApp() {
   await app.register(analyticsRoutes,   { prefix: '/projects' });
   await app.register(paidRoutes,        { prefix: '/projects' });
   await app.register(socialPostRoutes,  { prefix: '/projects' });
+  await app.register(seoRoutes,         { prefix: '/projects' });
+
 
   startReportScheduler(app);
   startSocialPublisher(app);

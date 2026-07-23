@@ -134,6 +134,49 @@ const socialPostRoutes: FastifyPluginAsync = async (app) => {
       return { post };
     },
   );
+
+  // ── Community Queue ───────────────────────────────────────────────────────
+
+  app.get<{ Params: { id: string } }>('/:id/social/community-queue', auth, async (request) => {
+    return app.prisma.communityQueueItem.findMany({
+      where: { projectId: request.params.id },
+      orderBy: { createdAt: 'desc' },
+    });
+  });
+
+  app.post<{ Params: { id: string }; Body: Record<string, any> }>('/:id/social/community-queue', auth, async (request, reply) => {
+    const body = (request.body as any) || {};
+    const item = await app.prisma.communityQueueItem.create({
+      data: {
+        projectId: request.params.id,
+        platform: body.platform || 'INSTAGRAM',
+        userHandle: body.userHandle || '@follower',
+        message: body.message || '',
+        postTitle: body.postTitle || null,
+        assignedTo: body.assignedTo || 'Social Team',
+        status: body.status || 'NEEDS_RESPONSE',
+      },
+    });
+    return reply.code(201).send(item);
+  });
+
+  app.patch<{ Params: { id: string; itemId: string }; Body: Record<string, any> }>('/:id/social/community-queue/:itemId', auth, async (request) => {
+    const body = (request.body as any) || {};
+    return app.prisma.communityQueueItem.update({
+      where: { id: request.params.itemId },
+      data: {
+        ...body,
+        respondedAt: body.status === 'RESPONDED' ? new Date() : undefined,
+      },
+    });
+  });
+
+
+  app.delete<{ Params: { id: string; itemId: string } }>('/:id/social/community-queue/:itemId', auth, async (request, reply) => {
+    await app.prisma.communityQueueItem.delete({ where: { id: request.params.itemId } });
+    return reply.code(204).send();
+  });
 };
 
 export default socialPostRoutes;
+

@@ -568,7 +568,7 @@ const aiRoutes: FastifyPluginAsync = async (app) => {
     }
   });
 
-  // GET /projects/:id/design/ai-usage — usage tracker (project + workspace totals)
+  // GET /projects/:id/design/ai-usage — usage tracker (project totals)
   app.get<{ Params: { id: string } }>('/:id/design/ai-usage', auth, async (request) => {
     const monthStart = new Date();
     monthStart.setDate(1);
@@ -581,12 +581,12 @@ const aiRoutes: FastifyPluginAsync = async (app) => {
         take: 20,
       }),
       app.prisma.apiUsageEvent.aggregate({
-        where: { createdAt: { gte: monthStart }, success: true },
+        where: { projectId: request.params.id, createdAt: { gte: monthStart }, success: true },
         _count: true,
         _sum: { costUsd: true },
       }),
       app.prisma.apiUsageEvent.aggregate({
-        where: { success: true },
+        where: { projectId: request.params.id, success: true },
         _count: true,
         _sum: { costUsd: true },
       }),

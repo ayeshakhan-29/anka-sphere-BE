@@ -187,7 +187,13 @@ model Project {
   socialPosts         SocialPost[]
   adAccountLinks      AdAccountLink[]
   metricSnapshots     MetricSnapshot[]
-
+  emailCampaigns      EmailCampaign[]
+  contentRepurposes   ContentRepurpose[]
+  communityQueueItems CommunityQueueItem[]
+  adCreatives         AdCreative[]
+  conversionEvents    ConversionEvent[]
+  backlinks           Backlink[]
+  keywordRankLogs     KeywordRankLog[]
 
   @@map("projects")
 }
@@ -404,6 +410,7 @@ model ContentPage {
   comments       Comment[]
   devTasks       DevTask[]
   deploymentQueueItems DeploymentQueueItem[]
+  repurposes     ContentRepurpose[]
 
   @@map("content_pages")
 }
@@ -873,3 +880,179 @@ model ApiUsageEvent {
 
   @@map("api_usage_events")
 }
+
+// ─── Extended Marketing & SEO Sub-Department Models ──────────────────────────
+
+enum EmailCampaignStatus {
+  DRAFT
+  SCHEDULED
+  SENT
+  ARCHIVED
+}
+
+model EmailCampaign {
+  id              String              @id @default(cuid())
+  projectId       String
+  name            String
+  audienceSegment String?
+  subjectLines    Json?
+  bodyCopy        String?             @db.Text
+  cta             String?
+  sendDate        DateTime?
+  status          EmailCampaignStatus @default(DRAFT)
+  externalId      String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("email_campaigns")
+}
+
+enum RepurposeFormat {
+  CAROUSEL
+  LINKEDIN_POST
+  EMAIL_SNIPPET
+  TWEET_THREAD
+  VIDEO_SCRIPT
+}
+
+model ContentRepurpose {
+  id           String          @id @default(cuid())
+  projectId    String
+  sourcePageId String?
+  targetFormat RepurposeFormat
+  title        String
+  notes        String?
+  status       String          @default("PLANNED")
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  project    Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sourcePage ContentPage? @relation(fields: [sourcePageId], references: [id], onDelete: SetNull)
+
+  @@map("content_repurposes")
+}
+
+enum CommunityQueueStatus {
+  NEEDS_RESPONSE
+  IN_PROGRESS
+  RESPONDED
+  ESCALATED
+}
+
+model CommunityQueueItem {
+  id           String               @id @default(cuid())
+  projectId    String
+  platform     SocialPlatform
+  userHandle   String
+  message      String
+  postTitle    String?
+  assignedTo   String?
+  status       CommunityQueueStatus @default(NEEDS_RESPONSE)
+  responseBody String?
+  respondedAt  DateTime?
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("community_queue_items")
+}
+
+enum AdCreativeFormat {
+  STATIC_IMAGE
+  VIDEO
+  CAROUSEL
+  TEXT
+}
+
+enum AdCreativeStatus {
+  DRAFT
+  IN_REVIEW
+  ACTIVE
+  PAUSED
+  REJECTED
+}
+
+model AdCreative {
+  id          String           @id @default(cuid())
+  projectId   String
+  title       String
+  format      AdCreativeFormat @default(STATIC_IMAGE)
+  network     AdNetwork        @default(META)
+  mediaUrl    String?
+  headline    String?
+  bodyCopy    String?
+  targetAdSet String?
+  status      AdCreativeStatus @default(DRAFT)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("ad_creatives")
+}
+
+enum EventStatus {
+  FIRING
+  NOT_FIRING
+  UNVERIFIED
+  UNDER_REVIEW
+}
+
+model ConversionEvent {
+  id          String      @id @default(cuid())
+  projectId   String
+  eventName   String
+  platform    String
+  triggerUrl  String?
+  firingRate  Int?        @default(0)
+  status      EventStatus @default(UNVERIFIED)
+  lastFiredAt DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("conversion_events")
+}
+
+enum BacklinkStatus {
+  LIVE
+  LOST
+  PENDING
+  DISAVOWED
+}
+
+model Backlink {
+  id           String         @id @default(cuid())
+  projectId    String
+  sourceDomain String
+  targetPage   String
+  anchorText   String
+  daScore      Int?
+  status       BacklinkStatus @default(PENDING)
+  acquiredAt   DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("backlinks")
+}
+
+model KeywordRankLog {
+  id          String   @id @default(cuid())
+  projectId   String
+  keyword     String
+  position    Int
+  previousPos Int?
+  clusterName String?
+  checkedAt   DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("keyword_rank_logs")
+}
+
