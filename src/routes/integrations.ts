@@ -38,14 +38,32 @@ const integrationRoutes: FastifyPluginAsync = async (app) => {
   const auth = { preHandler: [app.authenticate] };
 
   // Where the browser lands after an OAuth round-trip (settings → integrations tab)
-  const settingsUrl = (result: string) =>
-    `${process.env.FRONTEND_URL ?? 'http://localhost:4200'}/app/settings?integration=${result}`;
+  const settingsUrl = (result: string, projectId?: string) => {
+    if (projectId) {
+      return `${process.env.FRONTEND_URL ?? 'http://localhost:4200'}/app/projects/${projectId}/analytics?integration=${result}`;
+    }
+    return `${process.env.FRONTEND_URL ?? 'http://localhost:4200'}/app/settings?integration=${result}`;
+  };
 
   // ── Status of all integrations ──────────────────────────────────────────────
 
-  app.get('/', auth, async () => {
-    const connections = await app.prisma.integrationConnection.findMany();
-    const byProvider = new Map(connections.map((c) => [c.provider, c]));
+  app.get<{ Querystring: { projectId?: string } }>('/', auth, async (request) => {
+    const { projectId } = request.query;
+    const connections = await app.prisma.integrationConnection.findMany({
+      where: {
+        OR: [
+          { projectId: projectId || null },
+          { projectId: null }
+        ]
+      }
+    });
+    const byProvider = new Map<IntegrationProvider, any>();
+    for (const c of connections) {
+      const existing = byProvider.get(c.provider);
+      if (!existing || (c.projectId && !existing.projectId)) {
+        byProvider.set(c.provider, c);
+      }
+    }
 
     const oauthConfigured: Record<IntegrationProvider, boolean> = {
       GOOGLE_ANALYTICS: isGoogleConfigured(),
@@ -111,55 +129,63 @@ const integrationRoutes: FastifyPluginAsync = async (app) => {
 
   // ── OAuth flows (google / meta / tiktok) ────────────────────────────────────
 
-  const authUrlBuilders: Record<OAuthProviderSlug, () => string> = {
-    google: buildGoogleAuthUrl,
-    meta: buildMetaAuthUrl,
-    tiktok: buildTiktokAuthUrl,
-  };
+  async function resolveAuthUrl(slug: OAuthProviderSlug, projectId?: string): Promise<string> {
+    if (slug === 'google') return buildGoogleAuthUrl(projectId);
+    if (slug === 'meta') return buildMetaAuthUrl(app, projectId);
+    return buildTiktokAuthUrl(app, projectId);
+  }
 
-  const callbackHandlers: Record<OAuthProviderSlug, (code: string) => Promise<void>> = {
-    google: (code) => handleGoogleCallback(app, code),
-    meta: (code) => handleMetaCallback(app, code),
-    tiktok: (code) => handleTiktokCallback(app, code),
+  const callbackHandlers: Record<OAuthProviderSlug, (code: string, projectId?: string) => Promise<void>> = {
+    google: (code, projectId) => handleGoogleCallback(app, code),
+    meta: (code, projectId) => handleMetaCallback(app, code, projectId),
+    tiktok: (code, projectId) => handleTiktokCallback(app, code, projectId),
   };
 
   for (const slug of ['google', 'meta', 'tiktok'] as const) {
-    app.get(`/${slug}/auth-url`, auth, async () => ({ url: authUrlBuilders[slug]() }));
+    app.get<{ Querystring: { projectId?: string } }>(`/${slug}/auth-url`, auth, async (request) => {
+      const { projectId } = request.query;
+      return { url: await resolveAuthUrl(slug, projectId) };
+    });
 
     // Callbacks come from the provider's redirect, so no JWT — the signed
     // short-lived `state` param proves the flow originated here.
     app.get(`/${slug}/callback`, async (request, reply) => {
       const query = oauthCallbackQuerySchema.parse(request.query);
 
-      if (!verifyOAuthState(query.state, slug)) {
+      const verification = verifyOAuthState(query.state, slug);
+      if (!verification.valid) {
         return reply.code(400).send({ error: 'Invalid or expired OAuth state.' });
       }
       if (query.error || !query.code) {
         app.log.warn({ provider: slug, error: query.error, description: query.error_description }, 'OAuth denied');
-        return reply.redirect(settingsUrl(`${slug}_denied`));
+        return reply.redirect(settingsUrl(`${slug}_denied`, verification.projectId));
       }
 
       try {
-        await callbackHandlers[slug](query.code);
+        await callbackHandlers[slug](query.code, verification.projectId);
       } catch (err) {
         app.log.error({ err, provider: slug }, 'OAuth callback failed');
-        return reply.redirect(settingsUrl(`${slug}_error`));
+        return reply.redirect(settingsUrl(`${slug}_error`, verification.projectId));
       }
-      return reply.redirect(settingsUrl(`${slug}_connected`));
+      return reply.redirect(settingsUrl(`${slug}_connected`, verification.projectId));
     });
   }
 
   // ── Disconnect ──────────────────────────────────────────────────────────────
 
-  app.post<{ Params: { provider: string } }>('/:provider/disconnect', auth, async (request) => {
+  app.post<{ Params: { provider: string }; Querystring: { projectId?: string } }>('/:provider/disconnect', auth, async (request) => {
     const slug = disconnectProviderSchema.parse(request.params.provider);
+    const { projectId } = request.query;
 
     // One Google sign-in backs three provider rows — they disconnect together
     const providers: IntegrationProvider[] =
       slug === 'google' ? GOOGLE_PROVIDERS : slug === 'meta' ? ['META'] : ['TIKTOK'];
 
     await app.prisma.integrationConnection.updateMany({
-      where: { provider: { in: providers } },
+      where: {
+        provider: { in: providers },
+        projectId: projectId || null,
+      },
       data: {
         status: 'NOT_CONFIGURED',
         accessTokenEnc: null,

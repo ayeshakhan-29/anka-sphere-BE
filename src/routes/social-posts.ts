@@ -17,13 +17,13 @@ export async function publishSocialPost(app: FastifyInstance, post: SocialPost &
   try {
     let result: { externalPostId: string; externalUrl: string | null };
     if (post.platform === 'FACEBOOK') {
-      result = await publishToFacebook(app, caption, mediaUrl);
+      result = await publishToFacebook(app, caption, mediaUrl, post.projectId);
     } else if (post.platform === 'INSTAGRAM') {
       if (!mediaUrl) throw new IntegrationRequestError('Instagram posts need an attached image asset.', 422);
-      result = await publishToInstagram(app, caption, mediaUrl);
+      result = await publishToInstagram(app, caption, mediaUrl, post.projectId);
     } else if (post.platform === 'TIKTOK') {
       if (!mediaUrl) throw new IntegrationRequestError('TikTok posts need an attached video asset.', 422);
-      result = await publishToTiktok(app, caption, mediaUrl);
+      result = await publishToTiktok(app, caption, mediaUrl, post.projectId);
     } else {
       throw new IntegrationRequestError(`Publishing to ${post.platform} is not supported yet — post manually.`, 422);
     }

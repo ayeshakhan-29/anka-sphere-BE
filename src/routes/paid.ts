@@ -89,7 +89,7 @@ const paidRoutes: FastifyPluginAsync = async (app) => {
         return await cachedMetrics(app, request.params.id, source, `${query.range}d`, query.refresh, () =>
           network === 'GOOGLE'
             ? fetchGoogleAdsCampaigns(app, link.externalAccountId, query.range, request.params.id)
-            : fetchMetaAdsCampaigns(app, link.externalAccountId, query.range),
+            : fetchMetaAdsCampaigns(app, link.externalAccountId, query.range, request.params.id),
         );
       } catch (err: any) {
         return reply.code(400).send({

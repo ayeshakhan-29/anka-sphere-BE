@@ -364,6 +364,89 @@ const projectRoutes: FastifyPluginAsync = async (app) => {
 
     return reply.send({ success: true, status: updatedCreds.status });
   });
+
+  // ── Per-Project Social Credentials (Meta & TikTok) ─────────────────────────
+
+  app.get<{ Params: { id: string } }>('/:id/social-credentials', auth, async (request, reply) => {
+    const project = await app.prisma.project.findUnique({
+      where: { id: request.params.id },
+      select: { id: true, socialCredentials: true },
+    });
+    if (!project) return reply.code(404).send({ error: 'Project not found' });
+
+    const creds = project.socialCredentials;
+    const { decrypt } = await import('../utils/encryption.js');
+
+    return {
+      // Meta
+      hasMetaAppId: Boolean(creds?.metaAppIdEnc),
+      hasMetaAppSecret: Boolean(creds?.metaAppSecretEnc),
+      maskedMetaAppId: creds?.metaAppIdEnc
+        ? `${decrypt(creds.metaAppIdEnc).substring(0, 6)}...` : null,
+      // TikTok
+      hasTiktokClientKey: Boolean(creds?.tiktokClientKeyEnc),
+      hasTiktokClientSecret: Boolean(creds?.tiktokClientSecretEnc),
+      maskedTiktokClientKey: creds?.tiktokClientKeyEnc
+        ? `${decrypt(creds.tiktokClientKeyEnc).substring(0, 6)}...` : null,
+    };
+  });
+
+  app.post<{
+    Params: { id: string };
+    Body: {
+      metaAppId?: string;
+      metaAppSecret?: string;
+      tiktokClientKey?: string;
+      tiktokClientSecret?: string;
+    };
+  }>('/:id/social-credentials', auth, async (request, reply) => {
+    const project = await app.prisma.project.findUnique({ where: { id: request.params.id } });
+    if (!project) return reply.code(404).send({ error: 'Project not found' });
+
+    const { metaAppId, metaAppSecret, tiktokClientKey, tiktokClientSecret } = request.body;
+    const { encrypt } = await import('../utils/encryption.js');
+
+    const data: Record<string, string> = {};
+    if (metaAppId) data['metaAppIdEnc'] = encrypt(metaAppId);
+    if (metaAppSecret) data['metaAppSecretEnc'] = encrypt(metaAppSecret);
+    if (tiktokClientKey) data['tiktokClientKeyEnc'] = encrypt(tiktokClientKey);
+    if (tiktokClientSecret) data['tiktokClientSecretEnc'] = encrypt(tiktokClientSecret);
+
+    if (Object.keys(data).length === 0) {
+      return reply.code(400).send({ error: 'No credentials provided.' });
+    }
+
+    await app.prisma.projectSocialCredentials.upsert({
+      where: { projectId: request.params.id },
+      update: data,
+      create: { projectId: request.params.id, ...data },
+    });
+
+    return reply.send({ success: true });
+  });
+
+  app.delete<{ Params: { id: string }; Querystring: { provider: string } }>(
+    '/:id/social-credentials',
+    auth,
+    async (request, reply) => {
+      const { provider } = request.query as { provider?: string };
+      const data: Record<string, null> = {};
+      if (!provider || provider === 'meta') {
+        data['metaAppIdEnc'] = null;
+        data['metaAppSecretEnc'] = null;
+      }
+      if (!provider || provider === 'tiktok') {
+        data['tiktokClientKeyEnc'] = null;
+        data['tiktokClientSecretEnc'] = null;
+      }
+      await app.prisma.projectSocialCredentials.upsert({
+        where: { projectId: request.params.id },
+        update: data,
+        create: { projectId: request.params.id },
+      });
+      return reply.send({ success: true });
+    }
+  );
 };
 
 export default projectRoutes;

@@ -43,10 +43,11 @@ function requireEnv(): { clientId: string; clientSecret: string } {
   return { clientId, clientSecret };
 }
 
-export function buildGoogleAuthUrl(): string {
-  const state = createOAuthState('google');
+export function buildGoogleAuthUrl(projectId?: string): string {
+  const state = createOAuthState('google', projectId);
   if (!isGoogleConfigured()) {
-    return `/integrations/google/callback?code=mock-code&state=${state}`;
+    const backendBase = process.env.BACKEND_URL ?? 'http://localhost:3010';
+    return `${backendBase}/integrations/google/callback?code=mock-code&state=${state}`;
   }
   const { clientId } = requireEnv();
   const params = new URLSearchParams({
@@ -104,9 +105,9 @@ export async function handleGoogleCallback(app: FastifyInstance, code: string): 
     await app.prisma.$transaction(
       GOOGLE_PROVIDERS.map((provider) =>
         app.prisma.integrationConnection.upsert({
-          where: { provider },
+          where: { projectId_provider: { projectId: null as unknown as string, provider } },
           update: data,
-          create: { provider, ...data },
+          create: { provider, projectId: null, ...data },
         }),
       ),
     );
@@ -152,9 +153,9 @@ export async function handleGoogleCallback(app: FastifyInstance, code: string): 
   await app.prisma.$transaction(
     GOOGLE_PROVIDERS.map((provider) =>
       app.prisma.integrationConnection.upsert({
-        where: { provider },
+        where: { projectId_provider: { projectId: null as unknown as string, provider } },
         update: data,
-        create: { provider, ...data },
+        create: { provider, projectId: null, ...data },
       }),
     ),
   );
@@ -201,7 +202,9 @@ export async function getGoogleAccessToken(app: FastifyInstance, projectId?: str
     }
   }
 
-  const conn = await app.prisma.integrationConnection.findUnique({ where: { provider: CANONICAL } });
+  const conn = await app.prisma.integrationConnection.findUnique({
+    where: { projectId_provider: { projectId: null as unknown as string, provider: CANONICAL } }
+  });
   if (!conn || conn.status !== 'CONNECTED' || !conn.accessTokenEnc) {
     throw new IntegrationUnavailableError('Google is not connected.');
   }
@@ -226,7 +229,7 @@ export async function getGoogleAccessToken(app: FastifyInstance, projectId?: str
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Google token refresh failed.';
     await app.prisma.integrationConnection.updateMany({
-      where: { provider: { in: GOOGLE_PROVIDERS } },
+      where: { provider: { in: GOOGLE_PROVIDERS }, projectId: null },
       data: { status: 'ERROR', errorMessage: message },
     });
     throw err;
@@ -235,7 +238,7 @@ export async function getGoogleAccessToken(app: FastifyInstance, projectId?: str
   const accessTokenEnc = encrypt(tokens.access_token);
   const tokenExpiresAt = new Date(Date.now() + tokens.expires_in * 1000);
   await app.prisma.integrationConnection.updateMany({
-    where: { provider: { in: GOOGLE_PROVIDERS } },
+    where: { provider: { in: GOOGLE_PROVIDERS }, projectId: null },
     data: { accessTokenEnc, tokenExpiresAt, status: 'CONNECTED', errorMessage: null },
   });
 

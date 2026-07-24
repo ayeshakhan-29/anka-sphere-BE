@@ -15,6 +15,7 @@ export const contentPageSchema = z.object({
   seoTitle:       z.string().optional(),
   seoDescription: z.string().optional(),
   sortOrder:      z.number().int().optional(),
+  pillarId:       z.string().nullable().optional(),
 });
 
 export const updatePageStatusSchema = z.object({

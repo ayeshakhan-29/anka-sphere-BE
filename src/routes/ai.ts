@@ -18,6 +18,7 @@ const generateImageSchema = z.object({
   model: z.enum(['openai', 'stability']).default('openai'),
   saveToAssets: z.boolean().default(false),
   assetName: z.string().optional(),
+  count: z.number().int().min(1).max(3).default(1),
 });
 
 // gpt-image-1 medium-quality pricing (USD per image)
@@ -39,21 +40,28 @@ const aiRoutes: FastifyPluginAsync = async (app) => {
       select: { name: true },
     });
 
-    let dataUri: string;
+    const images: string[] = [];
     let revisedPrompt: string | null = null;
-    let costUsd: number;
+    let costUsd = 0;
+
+    const modelLabel = body.model === 'stability' ? 'Stable Image Core' : 'gpt-image-1';
 
     if (body.model === 'stability') {
-      // Errors carry a statusCode and are translated by the global error handler
-      const b64 = await generateStabilityImage(app, {
-        prompt: body.prompt,
-        size: body.size,
-        operation: 'image.generate',
-        projectId: request.params.id,
-        userName: user?.name,
+      // Loop stability calls in parallel
+      const promises = Array.from({ length: body.count }).map(async () => {
+        const b64 = await generateStabilityImage(app, {
+          prompt: body.prompt,
+          size: body.size,
+          operation: 'image.generate',
+          projectId: request.params.id,
+          userName: user?.name,
+        });
+        const dataUri = `data:image/png;base64,${b64}`;
+        return uploadToS3(dataUri, 'ai-image');
       });
-      dataUri = `data:image/png;base64,${b64}`;
-      costUsd = STABILITY_IMAGE_COST;
+      const urls = await Promise.all(promises);
+      images.push(...urls);
+      costUsd = STABILITY_IMAGE_COST * body.count;
     } else {
       const apiKey = process.env.OPENAI_API_KEY;
       if (!apiKey) {
@@ -68,7 +76,7 @@ const aiRoutes: FastifyPluginAsync = async (app) => {
             projectId: request.params.id,
             userName: user?.name,
             prompt: body.prompt.slice(0, 500),
-            costUsd: success ? IMAGE_COST[body.size] : 0,
+            costUsd: success ? (IMAGE_COST[body.size] * body.count) : 0,
             success,
           },
         });
@@ -81,7 +89,7 @@ const aiRoutes: FastifyPluginAsync = async (app) => {
           body: JSON.stringify({
             model: 'gpt-image-1',
             prompt: body.prompt,
-            n: 1,
+            n: body.count,
             size: body.size,
             quality: 'medium',
           }),
@@ -102,50 +110,58 @@ const aiRoutes: FastifyPluginAsync = async (app) => {
       }
 
       const json = (await res.json()) as { data: { b64_json?: string; url?: string; revised_prompt?: string }[] };
-      let b64 = json.data[0]?.b64_json;
-      if (!b64 && json.data[0]?.url) {
-        // API returned a short-lived URL — download and inline it so the asset never expires
-        const imgRes = await fetch(json.data[0].url);
-        if (imgRes.ok) b64 = Buffer.from(await imgRes.arrayBuffer()).toString('base64');
+      
+      // Process each variation returned
+      for (const item of json.data) {
+        let b64 = item.b64_json;
+        if (!b64 && item.url) {
+          const imgRes = await fetch(item.url);
+          if (imgRes.ok) b64 = Buffer.from(await imgRes.arrayBuffer()).toString('base64');
+        }
+        if (b64) {
+          const dataUri = `data:image/png;base64,${b64}`;
+          const url = await uploadToS3(dataUri, 'ai-image');
+          images.push(url);
+        }
       }
-      if (!b64) {
+
+      if (images.length === 0) {
         await logUsage(false);
         return reply.code(502).send({ error: 'Image generation returned no image.' });
       }
       await logUsage(true);
 
-      dataUri = `data:image/png;base64,${b64}`;
       revisedPrompt = json.data[0]?.revised_prompt ?? null;
-      costUsd = IMAGE_COST[body.size];
+      costUsd = IMAGE_COST[body.size] * body.count;
     }
 
-    const modelLabel = body.model === 'stability' ? 'Stable Image Core' : 'gpt-image-1';
-
-    const finalImageUrl = await uploadToS3(dataUri, 'ai-image');
-
-    let asset = null;
+    const assets = [];
     if (body.saveToAssets) {
       const design = await app.prisma.design.upsert({
         where: { projectId: request.params.id },
         update: {},
         create: { projectId: request.params.id },
       });
-      asset = await app.prisma.designAsset.create({
-        data: {
-          designId: design.id,
-          name: body.assetName ?? `AI · ${body.prompt.slice(0, 60)}`,
-          type: 'IMAGE',
-          url: finalImageUrl,
-          notes: `AI-generated (${modelLabel}). Prompt: ${body.prompt.slice(0, 300)}`,
-        },
-      });
+      for (let i = 0; i < images.length; i++) {
+        const asset = await app.prisma.designAsset.create({
+          data: {
+            designId: design.id,
+            name: body.assetName ? `${body.assetName} (Variant ${i+1})` : `AI · ${body.prompt.slice(0, 50)} · Var ${i+1}`,
+            type: 'IMAGE',
+            url: images[i],
+            notes: `AI-generated (${modelLabel}). Prompt: ${body.prompt.slice(0, 300)}`,
+          },
+        });
+        assets.push(asset);
+      }
     }
 
     return {
-      image: finalImageUrl,
+      image: images[0],
+      images: images,
       revisedPrompt,
       costUsd,
-      asset,
+      assets,
     };
   });
 
@@ -597,6 +613,37 @@ const aiRoutes: FastifyPluginAsync = async (app) => {
       month: { count: monthAgg._count, costUsd: monthAgg._sum.costUsd ?? 0 },
       total: { count: totalAgg._count, costUsd: totalAgg._sum.costUsd ?? 0 },
     };
+  });
+
+  // ── Prompt Templates ───────────────────────────────────────────────────────
+
+  app.get<{ Params: { id: string } }>('/:id/ai/templates', auth, async (request) => {
+    return app.prisma.promptTemplate.findMany({
+      where: { projectId: request.params.id },
+      orderBy: { name: 'asc' },
+    });
+  });
+
+  app.post<{ Params: { id: string }; Body: { name: string; prompt: string } }>('/:id/ai/templates', auth, async (request, reply) => {
+    const { name, prompt } = request.body;
+    if (!name || !prompt) {
+      return reply.code(400).send({ error: 'Name and prompt are required' });
+    }
+    const template = await app.prisma.promptTemplate.create({
+      data: {
+        projectId: request.params.id,
+        name,
+        prompt,
+      },
+    });
+    return reply.code(201).send(template);
+  });
+
+  app.delete<{ Params: { id: string; templateId: string } }>('/:id/ai/templates/:templateId', auth, async (request, reply) => {
+    await app.prisma.promptTemplate.delete({
+      where: { id: request.params.templateId },
+    });
+    return reply.code(204).send();
   });
 };
 

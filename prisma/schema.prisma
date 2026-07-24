@@ -194,6 +194,10 @@ model Project {
   conversionEvents    ConversionEvent[]
   backlinks           Backlink[]
   keywordRankLogs     KeywordRankLog[]
+  pillars             ContentPillar[]
+  promptTemplates     PromptTemplate[]
+  integrationConnections IntegrationConnection[]
+  socialCredentials   ProjectSocialCredentials?
 
   @@map("projects")
 }
@@ -411,6 +415,8 @@ model ContentPage {
   devTasks       DevTask[]
   deploymentQueueItems DeploymentQueueItem[]
   repurposes     ContentRepurpose[]
+  pillarId       String?
+  pillar         ContentPillar? @relation(fields: [pillarId], references: [id], onDelete: SetNull)
 
   @@map("content_pages")
 }
@@ -741,6 +747,23 @@ model ProjectGoogleCredentials {
 
   @@map("project_google_credentials")
 }
+
+model ProjectSocialCredentials {
+  id                    String   @id @default(cuid())
+  projectId             String   @unique
+  // Meta
+  metaAppIdEnc          String?
+  metaAppSecretEnc      String?
+  // TikTok
+  tiktokClientKeyEnc    String?
+  tiktokClientSecretEnc String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("project_social_credentials")
+}
 // ─── External Integrations ───────────────────────────────────────────────────
 
 enum IntegrationProvider {
@@ -792,7 +815,8 @@ enum MetricSource {
 /// encrypted at rest via utils/encryption.ts (same scheme as WP passwords).
 model IntegrationConnection {
   id              String              @id @default(cuid())
-  provider        IntegrationProvider @unique
+  projectId       String?
+  provider        IntegrationProvider
   status          IntegrationStatus   @default(NOT_CONFIGURED)
   accessTokenEnc  String?
   refreshTokenEnc String?
@@ -807,6 +831,9 @@ model IntegrationConnection {
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
 
+  project         Project?            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, provider])
   @@map("integration_connections")
 }
 
@@ -905,6 +932,8 @@ model EmailCampaign {
   updatedAt       DateTime            @updatedAt
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  pillarId  String?
+  pillar    ContentPillar? @relation(fields: [pillarId], references: [id], onDelete: SetNull)
 
   @@map("email_campaigns")
 }
@@ -1054,5 +1083,33 @@ model KeywordRankLog {
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@map("keyword_rank_logs")
+}
+
+model ContentPillar {
+  id        String   @id @default(cuid())
+  projectId String
+  name      String
+  color     String   @default("#3B82F6")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  pages   ContentPage[]
+  emails  EmailCampaign[]
+
+  @@map("content_pillars")
+}
+
+model PromptTemplate {
+  id        String   @id @default(cuid())
+  projectId String
+  name      String
+  prompt    String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("prompt_templates")
 }
 

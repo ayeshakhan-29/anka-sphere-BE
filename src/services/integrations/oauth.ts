@@ -15,9 +15,10 @@ function stateSecret(): string {
  * `state` param carries an HMAC-signed, short-lived payload instead of a JWT
  * (the app JWT payload shape is reserved for user sessions).
  */
-export function createOAuthState(provider: OAuthProviderSlug): string {
+export function createOAuthState(provider: OAuthProviderSlug, projectId?: string): string {
   const payload = JSON.stringify({
     provider,
+    projectId,
     nonce: crypto.randomBytes(8).toString('hex'),
     exp: Date.now() + STATE_TTL_MS,
   });
@@ -26,25 +27,27 @@ export function createOAuthState(provider: OAuthProviderSlug): string {
   return `${body}.${sig}`;
 }
 
-export function verifyOAuthState(state: string, provider: OAuthProviderSlug): boolean {
+export function verifyOAuthState(state: string, provider: OAuthProviderSlug): { valid: boolean; projectId?: string } {
   const [body, sig] = state.split('.');
-  if (!body || !sig) return false;
+  if (!body || !sig) return { valid: false };
 
   const expected = crypto.createHmac('sha256', stateSecret()).update(body).digest('base64url');
   const sigBuf = Buffer.from(sig);
   const expectedBuf = Buffer.from(expected);
   if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
-    return false;
+    return { valid: false };
   }
 
   try {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as {
       provider?: string;
+      projectId?: string;
       exp?: number;
     };
-    return payload.provider === provider && typeof payload.exp === 'number' && payload.exp > Date.now();
+    const valid = payload.provider === provider && typeof payload.exp === 'number' && payload.exp > Date.now();
+    return { valid, projectId: payload.projectId };
   } catch {
-    return false;
+    return { valid: false };
   }
 }
 

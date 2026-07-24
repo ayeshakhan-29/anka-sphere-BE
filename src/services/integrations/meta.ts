@@ -6,39 +6,46 @@ import { IntegrationUnavailableError, IntegrationRequestError } from './errors.j
 const AUTH_URL = 'https://www.facebook.com/v21.0/dialog/oauth';
 const GRAPH = 'https://graph.facebook.com/v21.0';
 
-// Publishing (Task 8) + ads insights (Task 7) + page/IG discovery
+// Standard Meta Graph API permissions compatible with Development & Business app modes
 const SCOPES = [
+  'public_profile',
   'pages_show_list',
   'pages_read_engagement',
-  'pages_manage_posts',
-  'instagram_basic',
-  'instagram_content_publish',
   'ads_read',
   'business_management',
 ].join(',');
+
 
 export function isMetaConfigured(): boolean {
   if (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) return true;
   return Boolean(process.env.META_APP_ID && process.env.META_APP_SECRET);
 }
 
-function requireEnv(): { appId: string; appSecret: string } {
+/** Resolve Meta credentials: project DB creds first, then env vars. */
+async function getProjectMetaEnv(
+  app: FastifyInstance,
+  projectId?: string,
+): Promise<{ appId: string; appSecret: string } | null> {
+  if (projectId) {
+    const creds = await app.prisma.projectSocialCredentials.findUnique({ where: { projectId } });
+    if (creds?.metaAppIdEnc && creds?.metaAppSecretEnc) {
+      return { appId: decrypt(creds.metaAppIdEnc), appSecret: decrypt(creds.metaAppSecretEnc) };
+    }
+  }
   const appId = process.env.META_APP_ID;
   const appSecret = process.env.META_APP_SECRET;
-  if (!appId || !appSecret) {
-    throw new IntegrationUnavailableError('Meta OAuth is not configured (missing META_APP_ID / META_APP_SECRET).');
-  }
-  return { appId, appSecret };
+  if (appId && appSecret) return { appId, appSecret };
+  return null;
 }
 
-export function buildMetaAuthUrl(): string {
-  const state = createOAuthState('meta');
-  if (!isMetaConfigured()) {
-    return `/integrations/meta/callback?code=mock-code&state=${state}`;
+export async function buildMetaAuthUrl(app: FastifyInstance, projectId?: string): Promise<string> {
+  const state = createOAuthState('meta', projectId);
+  const env = await getProjectMetaEnv(app, projectId);
+  if (!env) {
+    throw new IntegrationUnavailableError('Meta API credentials (META_APP_ID & META_APP_SECRET) are not configured for this project. Please enter and save your credentials first.');
   }
-  const { appId } = requireEnv();
   const params = new URLSearchParams({
-    client_id: appId,
+    client_id: env.appId,
     redirect_uri: redirectUriFor('meta'),
     response_type: 'code',
     scope: SCOPES,
@@ -46,6 +53,7 @@ export function buildMetaAuthUrl(): string {
   });
   return `${AUTH_URL}?${params.toString()}`;
 }
+
 
 async function graphGet<T>(path: string, params: Record<string, string>): Promise<T> {
   let res: Response;
@@ -84,7 +92,7 @@ async function graphPost<T>(path: string, params: Record<string, string>): Promi
  * one (~60 days), and persist it encrypted. Meta has no refresh tokens — when
  * the long-lived token lapses the status flips to ERROR and the user reconnects.
  */
-export async function handleMetaCallback(app: FastifyInstance, code: string): Promise<void> {
+export async function handleMetaCallback(app: FastifyInstance, code: string, projectId?: string): Promise<void> {
   if (code === 'mock-code') {
     const data = {
       status: 'CONNECTED' as const,
@@ -98,14 +106,18 @@ export async function handleMetaCallback(app: FastifyInstance, code: string): Pr
       connectedAt: new Date(),
     };
     await app.prisma.integrationConnection.upsert({
-      where: { provider: 'META' },
+      where: { projectId_provider: { projectId: (projectId ?? null) as string, provider: 'META' } },
       update: data,
-      create: { provider: 'META', ...data },
+      create: { provider: 'META', projectId: projectId ?? null, ...data },
     });
     return;
   }
 
-  const { appId, appSecret } = requireEnv();
+  const env = await getProjectMetaEnv(app, projectId);
+  if (!env) {
+    throw new IntegrationUnavailableError('Meta credentials not configured for this project. Add App ID & Secret in the Social Credentials tab.');
+  }
+  const { appId, appSecret } = env;
 
   const shortLived = await graphGet<{ access_token: string }>('/oauth/access_token', {
     client_id: appId,
@@ -146,22 +158,42 @@ export async function handleMetaCallback(app: FastifyInstance, code: string): Pr
     connectedAt: new Date(),
   };
 
-  await app.prisma.integrationConnection.upsert({
-    where: { provider: 'META' },
-    update: data,
-    create: { provider: 'META', ...data },
+  const targetProjectId = projectId ?? null;
+  const existingConn = await app.prisma.integrationConnection.findFirst({
+    where: { projectId: targetProjectId, provider: 'META' },
   });
+  if (existingConn) {
+    await app.prisma.integrationConnection.update({
+      where: { id: existingConn.id },
+      data,
+    });
+  } else {
+    await app.prisma.integrationConnection.create({
+      data: { provider: 'META', projectId: targetProjectId, ...data },
+    });
+  }
 }
 
+
 /** Return the stored long-lived Meta token; flags the connection when expired. */
-export async function getMetaAccessToken(app: FastifyInstance): Promise<string> {
-  const conn = await app.prisma.integrationConnection.findUnique({ where: { provider: 'META' } });
+export async function getMetaAccessToken(app: FastifyInstance, projectId?: string): Promise<string> {
+  let conn = null;
+  if (projectId) {
+    conn = await app.prisma.integrationConnection.findUnique({
+      where: { projectId_provider: { projectId, provider: 'META' } }
+    });
+  }
+  if (!conn || conn.status !== 'CONNECTED' || !conn.accessTokenEnc) {
+    conn = await app.prisma.integrationConnection.findUnique({
+      where: { projectId_provider: { projectId: null as unknown as string, provider: 'META' } }
+    });
+  }
   if (!conn || conn.status !== 'CONNECTED' || !conn.accessTokenEnc) {
     throw new IntegrationUnavailableError('Meta is not connected.');
   }
   if (conn.tokenExpiresAt && conn.tokenExpiresAt.getTime() <= Date.now()) {
     await app.prisma.integrationConnection.update({
-      where: { provider: 'META' },
+      where: { projectId_provider: { projectId: (conn.projectId ?? null) as string, provider: 'META' } },
       data: { status: 'ERROR', errorMessage: 'Long-lived token expired — reconnect Meta.' },
     });
     throw new IntegrationUnavailableError('Meta token expired — reconnect Meta.');
@@ -208,8 +240,9 @@ export async function fetchMetaAdsCampaigns(
   app: FastifyInstance,
   accountId: string,
   rangeDays: number,
+  projectId?: string,
 ): Promise<MetaAdsSummary> {
-  const token = await getMetaAccessToken(app);
+  const token = await getMetaAccessToken(app, projectId);
   if (token === 'mock-access-token') {
     const campaigns: MetaAdCampaign[] = [
       { id: 'meta-c1', name: 'Summer Organic Produce Video Lead Gen', status: 'ACTIVE', spend: 410.20, impressions: 18400, clicks: 1250, conversions: 78, ctr: 1250/18400, cpc: 410.20/1250 },
@@ -298,8 +331,8 @@ interface PageInfo {
 }
 
 /** First managed FB Page (with its page token + linked IG business account). */
-async function getFirstPage(app: FastifyInstance): Promise<PageInfo> {
-  const token = await getMetaAccessToken(app);
+async function getFirstPage(app: FastifyInstance, projectId?: string): Promise<PageInfo> {
+  const token = await getMetaAccessToken(app, projectId);
   const { data } = await graphGet<{ data?: PageInfo[] }>('/me/accounts', {
     access_token: token,
     fields: 'id,name,access_token,instagram_business_account',
@@ -314,13 +347,14 @@ export async function publishToFacebook(
   app: FastifyInstance,
   message: string,
   imageUrl?: string | null,
+  projectId?: string,
 ): Promise<PublishResult> {
-  const token = await getMetaAccessToken(app);
+  const token = await getMetaAccessToken(app, projectId);
   if (token === 'mock-access-token') {
     const postId = `mock-fb-post-${Math.random().toString(36).substring(2, 10)}`;
     return { externalPostId: postId, externalUrl: `https://www.facebook.com/${postId}` };
   }
-  const page = await getFirstPage(app);
+  const page = await getFirstPage(app, projectId);
 
   if (imageUrl && /^https?:\/\//.test(imageUrl)) {
     const res = await graphPost<{ post_id?: string; id?: string }>(`/${page.id}/photos`, {
@@ -344,8 +378,9 @@ export async function publishToInstagram(
   app: FastifyInstance,
   caption: string,
   imageUrl: string,
+  projectId?: string,
 ): Promise<PublishResult> {
-  const token = await getMetaAccessToken(app);
+  const token = await getMetaAccessToken(app, projectId);
   if (token === 'mock-access-token') {
     const postId = `mock-ig-post-${Math.random().toString(36).substring(2, 10)}`;
     return { externalPostId: postId, externalUrl: `https://www.instagram.com/p/${postId}` };
@@ -353,7 +388,7 @@ export async function publishToInstagram(
   if (!/^https?:\/\//.test(imageUrl)) {
     throw new IntegrationRequestError('Instagram publishing needs a public image URL (base64 data URIs are not supported by the Graph API).', 422);
   }
-  const page = await getFirstPage(app);
+  const page = await getFirstPage(app, projectId);
   const igId = page.instagram_business_account?.id;
   if (!igId) throw new IntegrationUnavailableError('No Instagram business account is linked to the connected Facebook Page.');
 

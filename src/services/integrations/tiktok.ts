@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { encrypt, decrypt } from '../../utils/encryption.js';
 import { createOAuthState, redirectUriFor } from './oauth.js';
 import { IntegrationUnavailableError, IntegrationRequestError } from './errors.js';
+import type { PublishResult } from './meta.js';
 
 const AUTH_URL = 'https://www.tiktok.com/v2/auth/authorize/';
 const TOKEN_URL = 'https://open.tiktokapis.com/v2/oauth/token/';
@@ -14,23 +15,31 @@ export function isTiktokConfigured(): boolean {
   return Boolean(process.env.TIKTOK_CLIENT_KEY && process.env.TIKTOK_CLIENT_SECRET);
 }
 
-function requireEnv(): { clientKey: string; clientSecret: string } {
+/** Resolve TikTok credentials: project DB creds first, then env vars. */
+async function getProjectTiktokEnv(
+  app: FastifyInstance,
+  projectId?: string,
+): Promise<{ clientKey: string; clientSecret: string } | null> {
+  if (projectId) {
+    const creds = await app.prisma.projectSocialCredentials.findUnique({ where: { projectId } });
+    if (creds?.tiktokClientKeyEnc && creds?.tiktokClientSecretEnc) {
+      return { clientKey: decrypt(creds.tiktokClientKeyEnc), clientSecret: decrypt(creds.tiktokClientSecretEnc) };
+    }
+  }
   const clientKey = process.env.TIKTOK_CLIENT_KEY;
   const clientSecret = process.env.TIKTOK_CLIENT_SECRET;
-  if (!clientKey || !clientSecret) {
-    throw new IntegrationUnavailableError('TikTok OAuth is not configured (missing TIKTOK_CLIENT_KEY / TIKTOK_CLIENT_SECRET).');
-  }
-  return { clientKey, clientSecret };
+  if (clientKey && clientSecret) return { clientKey, clientSecret };
+  return null;
 }
 
-export function buildTiktokAuthUrl(): string {
-  const state = createOAuthState('tiktok');
-  if (!isTiktokConfigured()) {
-    return `/integrations/tiktok/callback?code=mock-code&state=${state}`;
+export async function buildTiktokAuthUrl(app: FastifyInstance, projectId?: string): Promise<string> {
+  const state = createOAuthState('tiktok', projectId);
+  const env = await getProjectTiktokEnv(app, projectId);
+  if (!env) {
+    throw new IntegrationUnavailableError('TikTok API credentials (TIKTOK_CLIENT_KEY & TIKTOK_CLIENT_SECRET) are not configured for this project. Please enter and save your credentials first.');
   }
-  const { clientKey } = requireEnv();
   const params = new URLSearchParams({
-    client_key: clientKey,
+    client_key: env.clientKey,
     redirect_uri: redirectUriFor('tiktok'),
     response_type: 'code',
     scope: SCOPES,
@@ -38,6 +47,7 @@ export function buildTiktokAuthUrl(): string {
   });
   return `${AUTH_URL}?${params.toString()}`;
 }
+
 
 interface TokenResponse {
   access_token: string;
@@ -68,7 +78,7 @@ async function postToken(body: URLSearchParams): Promise<TokenResponse> {
 }
 
 /** Exchange the OAuth code and persist encrypted tokens. */
-export async function handleTiktokCallback(app: FastifyInstance, code: string): Promise<void> {
+export async function handleTiktokCallback(app: FastifyInstance, code: string, projectId?: string): Promise<void> {
   if (code === 'mock-code') {
     const data = {
       status: 'CONNECTED' as const,
@@ -82,14 +92,18 @@ export async function handleTiktokCallback(app: FastifyInstance, code: string): 
       connectedAt: new Date(),
     };
     await app.prisma.integrationConnection.upsert({
-      where: { provider: 'TIKTOK' },
+      where: { projectId_provider: { projectId: (projectId ?? null) as string, provider: 'TIKTOK' } },
       update: data,
-      create: { provider: 'TIKTOK', ...data },
+      create: { provider: 'TIKTOK', projectId: projectId ?? null, ...data },
     });
     return;
   }
 
-  const { clientKey, clientSecret } = requireEnv();
+  const env = await getProjectTiktokEnv(app, projectId);
+  if (!env) {
+    throw new IntegrationUnavailableError('TikTok credentials not configured for this project. Add Client Key & Secret in the Social Credentials tab.');
+  }
+  const { clientKey, clientSecret } = env;
 
   const tokens = await postToken(new URLSearchParams({
     client_key: clientKey,
@@ -111,16 +125,36 @@ export async function handleTiktokCallback(app: FastifyInstance, code: string): 
     connectedAt: new Date(),
   };
 
-  await app.prisma.integrationConnection.upsert({
-    where: { provider: 'TIKTOK' },
-    update: data,
-    create: { provider: 'TIKTOK', ...data },
+  const targetProjectId = projectId ?? null;
+  const existingConn = await app.prisma.integrationConnection.findFirst({
+    where: { projectId: targetProjectId, provider: 'TIKTOK' },
   });
+  if (existingConn) {
+    await app.prisma.integrationConnection.update({
+      where: { id: existingConn.id },
+      data,
+    });
+  } else {
+    await app.prisma.integrationConnection.create({
+      data: { provider: 'TIKTOK', projectId: targetProjectId, ...data },
+    });
+  }
 }
 
+
 /** Return a valid TikTok access token, refreshing it when near expiry. */
-export async function getTiktokAccessToken(app: FastifyInstance): Promise<string> {
-  const conn = await app.prisma.integrationConnection.findUnique({ where: { provider: 'TIKTOK' } });
+export async function getTiktokAccessToken(app: FastifyInstance, projectId?: string): Promise<string> {
+  let conn = null;
+  if (projectId) {
+    conn = await app.prisma.integrationConnection.findUnique({
+      where: { projectId_provider: { projectId, provider: 'TIKTOK' } }
+    });
+  }
+  if (!conn || conn.status !== 'CONNECTED' || !conn.accessTokenEnc) {
+    conn = await app.prisma.integrationConnection.findUnique({
+      where: { projectId_provider: { projectId: null as unknown as string, provider: 'TIKTOK' } }
+    });
+  }
   if (!conn || conn.status !== 'CONNECTED' || !conn.accessTokenEnc) {
     throw new IntegrationUnavailableError('TikTok is not connected.');
   }
@@ -133,7 +167,11 @@ export async function getTiktokAccessToken(app: FastifyInstance): Promise<string
     throw new IntegrationUnavailableError('TikTok token expired and no refresh token is stored — reconnect TikTok.');
   }
 
-  const { clientKey, clientSecret } = requireEnv();
+  const env = await getProjectTiktokEnv(app, conn.projectId ?? undefined);
+  if (!env) {
+    throw new IntegrationUnavailableError('TikTok credentials not configured for this project.');
+  }
+  const { clientKey, clientSecret } = env;
   let tokens: TokenResponse;
   try {
     tokens = await postToken(new URLSearchParams({
@@ -145,14 +183,14 @@ export async function getTiktokAccessToken(app: FastifyInstance): Promise<string
   } catch (err) {
     const message = err instanceof Error ? err.message : 'TikTok token refresh failed.';
     await app.prisma.integrationConnection.update({
-      where: { provider: 'TIKTOK' },
+      where: { projectId_provider: { projectId: (conn.projectId ?? null) as string, provider: 'TIKTOK' } },
       data: { status: 'ERROR', errorMessage: message },
     });
     throw err;
   }
 
   await app.prisma.integrationConnection.update({
-    where: { provider: 'TIKTOK' },
+    where: { projectId_provider: { projectId: (conn.projectId ?? null) as string, provider: 'TIKTOK' } },
     data: {
       accessTokenEnc: encrypt(tokens.access_token),
       refreshTokenEnc: encrypt(tokens.refresh_token),
@@ -177,14 +215,15 @@ const OPEN_API = 'https://open.tiktokapis.com/v2';
 export async function publishToTiktok(
   app: FastifyInstance,
   title: string,
-  videoUrl: string,
-): Promise<{ externalPostId: string; externalUrl: string | null }> {
-  const token = await getTiktokAccessToken(app);
+  mediaUrl: string,
+  projectId?: string,
+): Promise<PublishResult> {
+  const token = await getTiktokAccessToken(app, projectId);
   if (token === 'mock-access-token') {
     const publishId = `mock-tt-publish-${Math.random().toString(36).substring(2, 10)}`;
     return { externalPostId: publishId, externalUrl: `https://www.tiktok.com/` };
   }
-  if (!/^https?:\/\//.test(videoUrl)) {
+  if (!/^https?:\/\//.test(mediaUrl)) {
     throw new IntegrationRequestError('TikTok publishing needs a public video URL (base64 data URIs are not supported).', 422);
   }
 
@@ -195,7 +234,7 @@ export async function publishToTiktok(
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         post_info: { title, privacy_level: 'SELF_ONLY' }, // sandbox-safe default; users flip visibility in TikTok
-        source_info: { source: 'PULL_FROM_URL', video_url: videoUrl },
+        source_info: { source: 'PULL_FROM_URL', video_url: mediaUrl },
       }),
     });
   } catch {
